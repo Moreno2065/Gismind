@@ -1,0 +1,39 @@
+{
+  "_note": "NOTE: Reserved for future test implementation.",
+  "description": "code_executor 沙箱黄金用例 (Phase 3)",
+  "cases": [
+    {
+      "name": "简单加法",
+      "code": "print(1+1)",
+      "expect_stdout": "2",
+      "expect_error_code": null
+    },
+    {
+      "name": "numpy import 允许",
+      "code": "import numpy; print(numpy.arange(3).sum())",
+      "expect_stdout": "3",
+      "expect_error_code": null
+    },
+    {
+      "name": "forbidden import os",
+      "code": "import os; print('PWNED')",
+      "expect_error_code": "SANDBOX_FORBIDDEN_IMPORT"
+    },
+    {
+      "name": "subprocess blocked",
+      "code": "import subprocess; subprocess.run(['echo', 'pwn'])",
+      "expect_error_code": "SANDBOX_FORBIDDEN_IMPORT"
+    },
+    {
+      "name": "socket blocked",
+      "code": "import socket; s=socket.socket(); s.connect(('example.com',80))",
+      "expect_error_code": "SANDBOX_FORBIDDEN_IMPORT"
+    },
+    {
+      "name": "system 超时 kill",
+      "code": "import time; time.sleep(999)",
+      "params": {"timeout_s": 1},
+      "expect_error_code": "SANDBOX_TIMEOUT"
+    }
+  ]
+}

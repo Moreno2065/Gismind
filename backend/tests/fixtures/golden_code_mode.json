@@ -1,0 +1,99 @@
+{
+  "_note": "code-mode 黄金用例 — 驱动 HybridExecutor 完成完整路由 + 执行 + 结果提取",
+  "description": "HybridExecutor 的 inline / sandbox / banned 分流和 __result__ 提取",
+  "cases": [
+    {
+      "name": "inline 纯计算",
+      "agent_role": "geometer",
+      "code": "pois = [1, 2, 3]\n__result__ = {'pois': pois}",
+      "session_vars_input": {},
+      "tools": ["buffer", "overlay", "map_layer_build"],
+      "expected_required_executor": "inline",
+      "expected_executor_type": "inline",
+      "expect_success": true,
+      "expect_result": {"pois": [1, 2, 3]}
+    },
+    {
+      "name": "inline async 工具包装",
+      "agent_role": "poi",
+      "code": "location = {'lng': 118.78, 'lat': 32.04}\n__result__ = {'location': location}",
+      "session_vars_input": {},
+      "tools": ["geo_code", "query_poi"],
+      "expected_required_executor": "inline",
+      "expected_executor_type": "inline",
+      "expect_success": true,
+      "expect_result": {"location": {"lng": 118.78, "lat": 32.04}}
+    },
+    {
+      "name": "while 路由到 sandbox",
+      "agent_role": "coder",
+      "code": "x = 0\nwhile x < 10:\n    x += 1\n__result__ = {'x': x}",
+      "session_vars_input": {},
+      "tools": ["code_executor"],
+      "expected_required_executor": "sandbox",
+      "expected_executor_type": "sandbox",
+      "expect_success": true,
+      "expect_result": {"x": 10}
+    },
+    {
+      "name": "range 字面量炸弹路由到 sandbox",
+      "agent_role": "coder",
+      "code": "total = sum(range(10**7))\n__result__ = {'total': total}",
+      "session_vars_input": {},
+      "tools": ["code_executor"],
+      "expected_required_executor": "sandbox",
+      "expected_executor_type": "sandbox",
+      "expect_success": true
+    },
+    {
+      "name": "AST banned import 返回错误",
+      "agent_role": "coder",
+      "code": "import os",
+      "session_vars_input": {},
+      "tools": ["code_executor"],
+      "expected_required_executor": "inline",
+      "expected_executor_type": "inline",
+      "expect_success": false,
+      "expected_error_code": "AST_BANNED_NODE"
+    },
+    {
+      "name": "多 fence 拼接",
+      "agent_role": "geometer",
+      "code": "```python\nx = 1\n```\nsome explanation\n```python\n__result__ = {'x': x}\n```",
+      "session_vars_input": {},
+      "tools": ["buffer", "overlay"],
+      "expected_required_executor": "inline",
+      "expect_success": true,
+      "expect_result": {"x": 1}
+    },
+    {
+      "name": "session_vars 上下文传递",
+      "agent_role": "geometer",
+      "code": "buffered = buffer_geometry(data, 500)\n__result__ = {'buffered': buffered}",
+      "session_vars_input": {"data": [{"id": 1}, {"id": 2}]},
+      "tools": ["buffer"],
+      "expected_required_executor": "inline",
+      "expect_success": true,
+      "expect_result": {"buffered": True}
+    },
+    {
+      "name": "AsyncFor 路由到 sandbox",
+      "agent_role": "coder",
+      "code": "async for item in mock_iter():\n    print(item)\n__result__ = {'done': True}",
+      "session_vars_input": {},
+      "tools": ["code_executor"],
+      "expected_required_executor": "sandbox",
+      "expected_executor_type": "sandbox"
+    },
+    {
+      "name": "函数定义被 banned",
+      "agent_role": "coder",
+      "code": "def helper():\n    return 1\n__result__ = {'x': helper()}",
+      "session_vars_input": {},
+      "tools": ["code_executor"],
+      "expected_required_executor": "inline",
+      "expect_success": false,
+      "expected_error_code": "AST_BANNED_NODE"
+    }
+  ]
+}

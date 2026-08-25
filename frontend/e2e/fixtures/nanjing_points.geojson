@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [118.7874, 32.0206]},
+      "properties": {"name": "夫子庙测试点", "_source": "upload"}
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [118.7920, 32.0250]},
+      "properties": {"name": "秦淮测试点", "_source": "upload"}
+    }
+  ]
+}

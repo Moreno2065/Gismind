@@ -1,0 +1,13 @@
+name: vector_analysis
+title: "Vector analysis"
+description: "Buffer, overlay, voronoi, isochrone, dissolve, merge, spatial join operations."
+tools:
+  - buffer
+  - overlay
+  - voronoi
+  - isochrone
+  - dissolve_layer
+  - merge_layers
+  - join_by_location
+  - join_by_nearest
+  - count_points_in_polygon

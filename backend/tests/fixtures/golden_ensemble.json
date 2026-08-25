@@ -1,0 +1,8 @@
+{
+  "description": "Ensemble 一致性黄金用例 (N=2/3)",
+  "cases": [
+    {"name": "POI count 完全一致", "outcomes": [{"run_id":"r1","poi_count":12},{"run_id":"r2","poi_count":12}], "expected": {"tie_breaker_used":false}},
+    {"name": "POI count 差异 > 20%", "outcomes": [{"run_id":"r1","poi_count":12},{"run_id":"r2","poi_count":25}], "expected": {"tie_breaker_used":true}},
+    {"name": "单 run 无投票", "outcomes": [{"run_id":"r1","poi_count":5}], "expected": {"tie_breaker_used":false}}
+  ]
+}

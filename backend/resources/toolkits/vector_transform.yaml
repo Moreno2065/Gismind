@@ -1,0 +1,10 @@
+name: vector_transform
+title: "Vector transform"
+description: "Reprojection, centroid, simplification, geometry validation and repair."
+tools:
+  - reproject_layer
+  - centroid_layer
+  - simplify_geometry
+  - fix_geometries
+  - check_validity
+  - multipart_to_singlepart

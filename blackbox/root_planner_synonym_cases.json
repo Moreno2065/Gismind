@@ -1,0 +1,77 @@
+[
+  {
+    "id": "RP01",
+    "turns": ["帮我找出南京鼓楼医院周边三百米的咖啡馆，并把点位直接放到地图上。"],
+    "expected_tools": {"geo_code": 1, "query_poi": 1},
+    "expected_roles": {"geo": 1, "poi": 1},
+    "dependency_edges": [["geo_code", "query_poi"]],
+    "expect_map": true,
+    "tool_args": [{"tool": "query_poi", "required_keys": ["query", "radius"]}]
+  },
+  {
+    "id": "RP02",
+    "allowed_planner_sources": ["guardrail"],
+    "turns": ["请把 GPS 点 116.397、39.908 换成高德地图可直接使用的坐标。"],
+    "expected_tools": {"geo_transform": 1},
+    "expected_roles": {"geo": 1},
+    "dependency_edges": [],
+    "expect_map": false,
+    "tool_args": [{"tool": "geo_transform", "required_keys": ["operation", "lng", "lat"]}]
+  },
+  {
+    "id": "RP03",
+    "allowed_planner_sources": ["guardrail"],
+    "uploads": ["sample_points"],
+    "turns": ["从我刚传的点图层里挑出 class 等于 station 的记录，并作为新图层显示。"],
+    "expected_tools": {"data_io_read": 1, "extract_by_attribute": 1},
+    "expected_roles": {"geometer": 2},
+    "dependency_edges": [["data_io_read", "extract_by_attribute"]],
+    "expect_map": true,
+    "tool_args": [{"tool": "extract_by_attribute", "required_keys": ["field", "operator"]}]
+  },
+  {
+    "id": "RP04",
+    "uploads": ["nanjing_admin", "xuanwuhu"],
+    "turns": ["把前一个上传面和第二个上传面的公共区域单独提取出来并绘制。"],
+    "expected_tools": {"data_io_read": 2, "overlay": 1},
+    "expected_roles": {"geometer": 3},
+    "dependency_edges": [["data_io_read", "overlay"]],
+    "expect_map": true,
+    "tool_args": [{"tool": "overlay", "required_keys": ["how"]}]
+  },
+  {
+    "id": "RP05",
+    "allowed_planner_sources": ["guardrail"],
+    "uploads": ["dem"],
+    "turns": ["对上传的高程栅格先求坡度，再按小于15度、15到30度和大于30度分成三个等级后显示。"],
+    "expected_tools": {"data_io_read": 1, "slope": 1, "reclassify_raster": 1},
+    "expected_roles": {"geometer": 3},
+    "dependency_edges": [["data_io_read", "slope"], ["slope", "reclassify_raster"]],
+    "expect_map": true,
+    "tool_args": [{"tool": "reclassify_raster", "required_keys": ["bins", "values"]}]
+  },
+  {
+    "id": "RP06",
+    "turns": [
+      "请在南京新街口商圈附近五百米查一下蜜雪冰城。",
+      "沿用刚才的位置，改查茶百道并和上一轮数量比较。"
+    ],
+    "evaluation_turn": 1,
+    "expected_tools": {"query_poi": 1},
+    "expected_roles": {"poi": 1},
+    "dependency_edges": [],
+    "expect_map": true,
+    "tool_args": [{"tool": "query_poi", "required_keys": ["query"]}]
+  },
+  {
+    "id": "RP07",
+    "uploads": ["parcels"],
+    "turns": ["把刚上传的面要素向外扩展一百米，并把结果另存为可读取的 GeoJSON。"],
+    "expected_tools": {"data_io_read": 1, "buffer": 1, "export_result": 1},
+    "expected_roles": {"geometer": 3},
+    "dependency_edges": [["data_io_read", "buffer"], ["buffer", "export_result"]],
+    "expect_map": false,
+    "tool_args": [{"tool": "buffer", "required_keys": ["radius_m"]}, {"tool": "export_result", "required_keys": ["format"]}],
+    "export_readable": true
+  }
+]

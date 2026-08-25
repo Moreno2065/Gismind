@@ -1,0 +1,7 @@
+name: vector_overlay
+title: "Vector overlay"
+description: "Overlay, clip, and spatial filtering operations."
+tools:
+  - overlay
+  - clip_layer
+  - extract_by_location

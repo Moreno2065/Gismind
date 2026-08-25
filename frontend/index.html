@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Gismind — 空间智能 GIS Agent。用自然语言完成 POI 查询、缓冲区、叠加、等时圈等空间分析。" />
+    <title>Gismind · 空间智能</title>
+    <script>
+      // 早期同步脚本：根据 localStorage 提前给 <html> 打 .light class，避免首帧闪烁。
+      // 必须放在所有样式与脚本之前。
+      (function () {
+        try {
+          var t = window.localStorage.getItem('gismind.theme');
+          if (t === 'light') document.documentElement.classList.add('light');
+          else document.documentElement.classList.remove('light');
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Fonts: system font stacks, avoiding external network requests for mainland China -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

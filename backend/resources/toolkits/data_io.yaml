@@ -1,0 +1,9 @@
+name: data_io
+title: "Data IO"
+description: "Load vector/raster data, geocode, query POI, export results."
+tools:
+  - geo_code
+  - query_poi
+  - data_io_read
+  - map_layer_build
+default_active: true

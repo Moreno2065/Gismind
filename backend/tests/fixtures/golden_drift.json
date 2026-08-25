@@ -1,0 +1,22 @@
+{
+  "_note": "NOTE: Reserved for future test implementation.",
+  "_comment_sprint1": "Sprint 1 增量：坐标系原点漂移基线。每次 geo_code/loop 重构后，应满足下面 source_count_geq / disambiguated 等条件。",
+  "_how_to_validate": [
+    "cd backend",
+    "python -c \"from app.tools.geo_code import GeoCoder; from app.config import settings; import asyncio; gc = GeoCoder(amap_key=settings.AMAP_KEY); print(asyncio.run(gc.geocode('南京新街口'))['candidates'])\""
+  ],
+  "cases": [
+    {
+      "input": "南京新街口 500m 蜜雪冰城",
+      "expected_source_count_geq": 5,
+      "expected_candidates_geq": 2,
+      "expected_principal_in_nanjing": true,
+      "tolerance_m": 50
+    },
+    {
+      "input": "新街口",
+      "expected_disambiguated_true": true,
+      "expected_candidate_count_geq": 2
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+name: raster
+title: "Raster analysis"
+description: "Raster reprojection, clipping, calculator, zonal statistics, terrain analysis, sampling, and conversion."
+tools:
+  - reproject_raster
+  - clip_raster_by_mask
+  - clip_raster_by_extent
+  - raster_calculator
+  - zonal_statistics
+  - raster_sampling
+  - rasterize_vector
+  - polygonize_raster
+  - slope
+  - aspect
+  - hillshade
+  - contour
+  - reclassify_raster
+  - terrain_ruggedness_index
+  - topographic_position_index
+  - roughness

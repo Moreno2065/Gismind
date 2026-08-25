@@ -1,0 +1,257 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   Gismind — Cartographic Intelligence theme
+   双主题（dark 默认 / atlas-paper light）— 通过 <html> 上的 .light class 切换。
+   所有色彩 token 用 RGB 三元组存到 --c-* 中，由 tailwind.config.js 通过
+   `rgb(var(--…) / <alpha-value>)` 引用，从而保留 /50 等透明度修饰符。
+   ========================================================================= */
+
+@layer base {
+  /* —— DARK（默认）· 深 slate，保留既有 cartographic intelligence 视觉 —— */
+  :root {
+    color-scheme: dark;
+
+    --c-ink-950: 10 13 18;     /* page background */
+    --c-ink-900: 15 20 27;     /* raised surfaces */
+    --c-ink-800: 22 28 37;     /* panels / bubbles (assistant) */
+    --c-ink-700: 31 38 50;     /* borders */
+    --c-ink-600: 42 51 64;     /* hover */
+    --c-ink-500: 58 69 84;     /* muted text */
+    --c-ink-400: 91 103 118;   /* secondary text */
+    --c-ink-300: 138 150 166;  /* tertiary */
+    --c-ink-200: 184 194 207;  /* primary text on dark */
+    --c-ink-100: 221 227 235;  /* headings */
+    --c-ink-50:  244 246 250;  /* near-white */
+
+    --c-amber:       255 122 26;   /* 高德焦点色 */
+    --c-amber-glow:  255 154 71;
+    --c-amber-deep:  194 65 12;
+
+    --c-osm:       107 114 128;
+    --c-osm-glow:  156 163 175;
+
+    --c-signal-thinking: 125 211 252;
+    --c-signal-fetching: 251 191 36;
+    --c-signal-error:    248 113 113;
+    --c-signal-done:      74 222 128;
+    --c-signal-voting:   124  58 237;  /* purple #7c3aed */
+    --c-signal-reviewing:   8 145 178;  /* cyan #0891b2 */
+    --c-signal-reflecting: 217 119   6;  /* amber #d97706 */
+
+    --c-bubble-rim:    255 255 255; /* inset highlight in bubble shadow */
+    --c-bubble-shadow:   0   0   0; /* drop shadow */
+    --c-glow:          255 122  26; /* shadow-glow ring */
+
+    /* 主题切换控件用语义 */
+    --c-paper:   244 246 250;
+    --c-canvas:   10  13  18;
+    --c-ridge:    31  38  50;
+  }
+
+  /* —— LIGHT · atlas paper：米白纸张 + 暖墨黑 + 暖橙 —— */
+  :root.light {
+    color-scheme: light;
+
+    --c-ink-950: 245 239 227;  /* 纸张米白 — page bg */
+    --c-ink-900: 236 228 210;  /* 卡片底 */
+    --c-ink-800: 253 250 242;  /* 面板（最浅米白） */
+    --c-ink-700: 216 205 180;  /* 边框 */
+    --c-ink-600: 192 181 154;  /* hover */
+    --c-ink-500: 150 138 111;  /* muted */
+    --c-ink-400: 107  95  71;  /* secondary */
+    --c-ink-300:  77  65  40;  /* tertiary */
+    --c-ink-200:  44  36  24;  /* primary text */
+    --c-ink-100:  26  20  13;  /* heading */
+    --c-ink-50:   10   7   3;  /* near-black */
+
+    --c-amber:       210  74   0;   /* 深一点的橙，浅底上更显色 */
+    --c-amber-glow:  255 122  26;
+    --c-amber-deep:  135  40   0;
+
+    --c-osm:       138 127 108;      /* OSM 暖灰 */
+    --c-osm-glow:  179 168 146;
+
+    --c-signal-thinking:  14 116 144; /* 深 cyan */
+    --c-signal-fetching: 180  83   9; /* 深琥珀 */
+    --c-signal-error:    185  28  28; /* 深红 */
+    --c-signal-done:      21 128  61; /* 深绿 */
+    --c-signal-voting:    107  33 168;  /* 深紫 */
+    --c-signal-reviewing:  14 116 144;  /* 深 cyan */
+    --c-signal-reflecting: 146  64  14;  /* 深 amber */
+
+    --c-bubble-rim:    255 255 255;
+    --c-bubble-shadow:  26  20  13;
+    --c-glow:          210  74   0;
+
+    --c-paper:   255 255 255;
+    --c-canvas:  245 239 227;
+    --c-ridge:   216 205 180;
+  }
+
+  /* 主题切换时的色彩过渡 — 仅作用于根与文本，避免整页闪动 */
+  html,
+  body {
+    transition: background-color 280ms ease, border-color 280ms ease, color 180ms ease, fill 180ms ease, stroke 180ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html, body, body * {
+      transition: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background-color: rgb(var(--c-ink-950));
+    color: rgb(var(--c-ink-200));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 滚动条 — 主题适配 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-ink-600));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-ink-500));
+  }
+
+  /* 选区高亮 — 琥珀 */
+  ::selection {
+    background: rgb(var(--c-amber) / 0.25);
+    color: rgb(var(--c-ink-50));
+  }
+
+  /* 焦点环 — 可访问性 */
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-amber) / 0.6);
+    outline-offset: 2px;
+  }
+}
+
+/* =========================================================================
+   Chat prose — Markdown 渲染样式（react-markdown 输出）
+   ========================================================================= */
+@layer components {
+  .prose-chat {
+    @apply text-[15px] leading-relaxed;
+    color: rgb(var(--c-ink-200));
+  }
+  .prose-chat p {
+    @apply my-2 first:mt-0 last:mb-0;
+  }
+  .prose-chat h1,
+  .prose-chat h2,
+  .prose-chat h3 {
+    @apply mb-2 mt-4 font-display font-medium;
+    color: rgb(var(--c-ink-100));
+  }
+  .prose-chat h1 {
+    @apply text-xl;
+  }
+  .prose-chat h2 {
+    @apply text-lg;
+  }
+  .prose-chat h3 {
+    @apply text-base;
+  }
+  .prose-chat ul,
+  .prose-chat ol {
+    @apply my-2 pl-5;
+  }
+  .prose-chat ul {
+    @apply list-disc;
+  }
+  .prose-chat ol {
+    @apply list-decimal;
+  }
+  .prose-chat li {
+    @apply my-1;
+  }
+  .prose-chat li::marker {
+    color: rgb(var(--c-ink-500));
+  }
+  .prose-chat a {
+    @apply underline underline-offset-2 transition;
+    color: rgb(var(--c-amber));
+    text-decoration-color: rgb(var(--c-amber) / 0.4);
+  }
+  .prose-chat a:hover {
+    text-decoration-color: rgb(var(--c-amber));
+  }
+  .prose-chat strong {
+    font-weight: 500;
+    color: rgb(var(--c-ink-100));
+  }
+  .prose-chat em {
+    @apply italic;
+    color: rgb(var(--c-ink-300));
+  }
+  .prose-chat code {
+    @apply rounded px-1.5 py-0.5 font-mono text-[13px];
+    background-color: rgb(var(--c-ink-900));
+    color: rgb(var(--c-amber));
+    border: 1px solid rgb(var(--c-ink-700));
+  }
+  .prose-chat pre {
+    @apply my-3 overflow-x-auto rounded-lg p-3;
+    background-color: rgb(var(--c-ink-950));
+    border: 1px solid rgb(var(--c-ink-700));
+  }
+  .prose-chat pre code {
+    @apply border-0 bg-transparent p-0;
+    color: rgb(var(--c-ink-200));
+  }
+  .prose-chat blockquote {
+    @apply my-2 pl-3;
+    border-left: 2px solid rgb(var(--c-amber) / 0.4);
+    color: rgb(var(--c-ink-400));
+  }
+  .prose-chat table {
+    @apply my-3 w-full border-collapse text-sm;
+  }
+  .prose-chat th,
+  .prose-chat td {
+    @apply border px-3 py-1.5 text-left;
+    border-color: rgb(var(--c-ink-700));
+  }
+  .prose-chat th {
+    background-color: rgb(var(--c-ink-800));
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgb(var(--c-ink-400));
+  }
+  .prose-chat hr {
+    @apply my-4;
+    border-color: rgb(var(--c-ink-700));
+  }
+}
