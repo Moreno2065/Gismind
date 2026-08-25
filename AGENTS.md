@@ -72,15 +72,21 @@ Coder 将 LLM 从"填 JSON"模式翻转成"写 Python 代码"模式。**inline �
 - **`sandbox_runner.py`**：`SandboxExecutor` 包装 `run_in_sandbox`，***tempfile 注入***（避 Windows 32KB 命令行限制）+ UUID sentinel stderr 回捞 `__result__`。
 - **`types.py`**：`ExecutionResult` / `InspectionResult` / `ASTBannedNodeError`
 
-工具注册（`TOOL_SPECS`，`registry.py`）：
+工具注册（`TOOL_SPECS`，`registry.py`）当前共有 **62 个规格项**。其中 **60 个**在
+`tool_execution._TOOL_REGISTRY` 中有实际 handler；`fetch_from_redis` 与 `parse_zip`
+仅保留规格元数据，不应计入当前可执行工具。按规格中的 `executor_type` 统计：
 
-| 执行类型 | 工具 | 说明 |
-|---------|------|------|
-| `inline` | buffer, overlay, voronoi, isochrone, map_layer_build, geo_transform | ~~主进程直接调库~~ inline 路径已废弃，实际走 sandbox |
-| `async` | geo_code, query_poi, fetch_from_redis | 同步 proxy 包装（`_run_async` 线程本地 loop 复用） |
-| `sandbox` | parse_zip, code_executor | 子进程隔离执行 |
+| 执行类型 | 规格数 | 有 handler | 说明 |
+|---------|------:|-----------:|------|
+| `inline` | 52 | 52 | 工具自身是本地计算 handler；模型生成代码仍统一在 sandbox 子进程中运行 |
+| `async` | 8 | 7 | IO/外部服务经同步 proxy 包装；`fetch_from_redis` 当前无 handler |
+| `sandbox` | 2 | 1 | `code_executor` 可执行；`parse_zip` 当前无 handler |
 
-所有工具对 LLM 暴露为统一 Python 函数接口（需 kwargs）。底层由 `_build_code_mode_tool_fns` 自动路由。
+5 个 Kernel 语义工具（Toolkit / Skill / Workspace / Clarification）均有 handler。扣除它们后，
+当前共有 **55 个有 handler 的非 Kernel 工具**。这是“工具接口数”，不等于产品功能完成数；
+一个工具可能承载多个表现能力，部分工具也需要 Toolkit 激活后才会暴露。只有当前角色或
+Toolkit 可见且有 handler 的 code-mode 工具才会以 kwargs Python 函数接口暴露给 LLM，
+底层由 `_build_code_mode_tool_fns` 路由。
 
 ### 可用 Sub-Agent 角色
 
@@ -129,14 +135,28 @@ Coder 将 LLM 从"填 JSON"模式翻转成"写 Python 代码"模式。**inline �
 
 ### Tool 层（`app/tools/`）
 
-已接入的工具：`geo_code`、`query_poi`、`buffer`、`overlay`、`voronoi`、`isochrone`、`data_io_read`、`map_layer_build`、`code_executor`。
+当前工具能力不能再概括成早期的 9 个基础工具。以 `TOOL_SPECS` 和
+`_TOOL_REGISTRY` 的交集为准，共有 **60 个可执行 handler**：
+
+| 类别 | 规格数 | 可执行数 | 代表工具 |
+|------|------:|---------:|----------|
+| 基础 / POI / 核心分析 / 可视化 / 沙箱 | 12 | 10 | `geo_code`、`query_poi`、`buffer`、`overlay`、`voronoi`、`isochrone`、`map_layer_build`、`geo_transform`、`code_executor` |
+| Kernel 语义工具 | 5 | 5 | `select_toolkit`、`inspect_workspace`、`suggest_skill`、`load_skill`、`proactive_clarification` |
+| Vector 分析 | 9 | 9 | 裁剪、融合、合并、空间连接、最近连接、点计数、位置提取、凸包、包围盒 |
+| Vector 变换 | 10 | 10 | 质心、面内点、简化、修复、有效性检查、单部件化、去重、捕捉、重投影、批量重投影 |
+| 属性处理 | 4 | 4 | 属性筛选、字段保留、字段改名、字段计算 |
+| Raster | 16 | 16 | 重投影、裁剪、栅格计算、分区统计、采样、矢栅互转、坡度、坡向、阴影、等高线、重分类、TRI、TPI、粗糙度 |
+| IO | 6 | 6 | 矢量/栅格/CSV 加载、CSV 转点、图层摘要、结果导出 |
+
+> `fetch_from_redis`、`parse_zip` 虽仍在规格表中，但当前没有 handler，不能写成已经接入的正常可执行工具。
 
 - `geo_code.py`：地理编码（地名→坐标），返回多候选含 disambiguated 标记
 - `poi_query.py`：高德优先 + OSM 兜底，含 R-Tree 空间去重
-- `spatial_analysis.py`：缓冲区、叠加分析、泰森多边形、等时圈
+- `spatial_analysis.py`：缓冲区、叠加、泰森多边形、等时圈、裁剪、连接、几何修复、属性与投影处理
+- `raster_analysis.py`：16 个栅格分析接口，包括地形派生、裁剪、统计、采样、重分类和矢栅互转
 - `geo_transform.py`：WGS84 ↔ GCJ02 数学偏转
-- `data_io.py`：shp ZIP / geojson / kml 解析，含编码探测
-- `map_layer.py`：图层配置生成（供前端高德 JS API 渲染）
+- `data_io.py`：shp ZIP / GeoJSON / KML / GeoTIFF 上传读取，以及路径型 vector/raster/CSV 加载和结果导出
+- `map_layer.py`：点、热力、面、线、FeatureCollection 与图表配置生成
 - `policy.py`：工具执行策略
 - `sandbox/runner.py`：代码沙箱子进程执行
 - `sandbox/sitecustomize_gismind.py`：沙箱内建 import 黑名单 + socket 禁用
@@ -192,30 +212,62 @@ Coder 将 LLM 从"填 JSON"模式翻转成"写 Python 代码"模式。**inline �
 
 前端：`frontend/.env.local` 设置 `VITE_AMAP_KEY`、`VITE_AMAP_SECURITY_CODE`、`VITE_API_BASE_URL`。
 
-## Current Gaps
+## Current Capability Status
 
-**已接入的工具**：`geo_code`、`query_poi`、`buffer`、`overlay`、`voronoi`、`isochrone`、`data_io_read`、`map_layer_build`、`code_executor`、`fetch_from_redis`、`parse_zip`、`geo_transform`。端到端可跑通：地名解析 → POI 查询 → 缓冲/叠加 → 图层生成。Multi-Sub-Agent 分发、Verifier 审查、代码沙箱均已实现。会话与空间记忆已持久化到 Redis。
+### 数量口径
+
+- `docs/GIS_Agent_技术文档.md` 的设计级产品能力清单当前编号到 **55**，不是旧版的 45。
+- `TOOL_SPECS` 有 **62** 个规格项；`_TOOL_REGISTRY` 有 **60** 个对应 handler。
+- 60 个 handler 中包含 5 个 Kernel 语义工具，因此有 **55 个非 Kernel 可执行工具**。
+- “产品能力数”“工具规格数”“有 handler 的工具数”是三个不同口径，禁止互相替代。
+- 仅在 `TOOL_SPECS` 注册不代表可执行；仅在工具类中存在方法也不代表已接入 Root Planner、Sub-Agent 和公开 API。
+
+### 已接入的主要链路
+
+- 地理编码、坐标转换、POI 查询与高德 → OSM 兜底。
+- GeoJSON、Shapefile ZIP、KML、GeoTIFF 浏览器上传，Redis `file_id` 持久化与 `data_io_read` 消费。
+- 19 个 Vector 分析/变换工具和 4 个属性处理工具。
+- 16 个 Raster 工具：重投影、按掩膜/范围裁剪、栅格计算、分区统计、采样、矢栅互转、坡度、坡向、山体阴影、等高线、重分类、TRI、TPI、粗糙度。
+- 点、热力、面、线、FeatureCollection、Raster 图层和 ECharts 图表的前端消费与渲染。
+- Dispatcher DAG、依赖产物传递、Verifier/refinement、awaiting_input/resume、取消、checkpoint、SSE trace 和 Code Mode sandbox。
+- Event、Context Budget、Duplicate Guard 与 Run Control（设计清单 52–55）已经有对应模块并接入运行链路。
+- 会话、空间记忆与上传索引使用 Redis；LangGraph checkpoint 使用 SQLite。
 
 **Schema-first + Code-Mode fallback 已实现**：普通角色使用闭合 JSON Schema 单步调用；`coder` 在工具 Schema 无法表达时写 Python。D2 后 inline 路径已废弃，所有模型生成代码统一走子进程 sandbox：
 - `HybridExecutor`：fence 预处理 → AST → sandbox 执行
 - `ast_guard`：AST 静态分析 + `ASTBannedNodeError`（inline/sandbox 混合调用检测已随 inline 废弃移除）
 - `SandboxExecutor`：tempfile IPC（避 Windows 32KB 命令行）+ UUID sentinel stderr 回捞 + pywin32 Job Object 保活
 - 沙箱黑名单不可还原化（`sitecustomize_gismind.py`）：import 黑名单 + socket 禁用
-- `namespace` + `TOOL_SPECS`：所有工具以 kwargs Python 函数暴露；async 工具走 sync proxy，所有工具在 sandbox 中执行
+- `namespace` + `TOOL_SPECS`：仅当前角色/Toolkit 可见且有 handler 的工具以 kwargs Python 函数暴露；async 工具走 sync proxy，模型生成代码统一在 sandbox 中执行
 - `build_code_mode_prompt`：自动从 registry 分桶生成 system prompt
 
-**Preflight / Hooks / Risk 已接线**（Phase 1）：规则库已注册，`BEFORE_TOOL_CALL` hook 已接入主链路，risk 评估贯通。
+**Preflight / Hooks / Risk 状态**：规则库和 `BEFORE_TOOL_CALL` 已接入主链，preflight issue 可以进入 RiskPolicy 决策；
+`AFTER_TOOL_CALL` 风险 hook 虽已注册，但主执行链当前没有发射该 hook，因此执行后结果风险检测尚未贯通。
 
-**未实现的功能**（对照原文档 45 个功能清单）：
+### 部分实现，不能写成完整能力
 
-| 层 | 缺失功能 | 说明 |
-|----|---------|------|
-| 基础 | 格式互转管道完整版（功能 5） | data_io 支持 shp/geojson/kml，缺 GeoPackage/CSV(WKT) |
-| 数据获取 | 实时交通路况（10）、街景抓取（11） | 未实现 |
-| 空间分析 | 视线/通视（16）、坡度/坡向/剖面（17） | 需 DEM，未实现 |
-| 遥感气象 | DEM 获取（21）、遥感影像（22）、气象叠加（23）、时序分析（24） | 整层未实现，需 rasterio/xarray |
-| 可视化 | 专题图分级设色（27）、3D 地形（28）、时序动画（29）、MarkerCluster（30）、报告生成（31） | 未实现 |
-| 工程 | Celery 异步队列（42）、API 限流完整版（44） | 未配置 worker，限流中间件可选 |
-| utils | `logging.py`（structlog）、`crs_heuristics.py` | docs/07 有设计，未实现 |
+| 设计清单项 | 当前状态 |
+|------------|----------|
+| 4 地理编码/逆编码 | 正向地理编码已接入；逆地理编码不是独立、完整的公开工具 |
+| 5 格式互转管道 | 上传支持 ZIP/GeoJSON/JSON/KML/GeoTIFF；内部有 `load_csv`、CSV XY 转点和结果导出，但公开上传不接受 CSV/GPKG，CSV(WKT) 与完整格式互转未完成 |
+| 6 高德 POI 查询 | 当前主链路支持关键词/周边查询；设计中的多边形搜索、ID 详情等模式未全部作为独立能力暴露 |
+| 17 坡度/坡向/剖面 | `slope`、`aspect` 已实现并有 handler；剖面分析未实现，不能把整项写成“未实现” |
+| 18 核密度估计 | `SpatialAnalyzer.kernel_density()` 有实现，但未注册为 `TOOL_SPECS`/handler，Root Planner 当前不可直接规划 |
+| 19 拓扑检查与修复 | `check_validity`、`fix_geometries`、去重等已接入；`topology_check()` 方法未作为独立 Agent 工具暴露 |
+| 20 属性表智能处理 | 属性筛选、字段保留/改名/计算已接入；Jenks、等距和分位数自动分级没有完整产品链路 |
+| 26–27 热力图/专题图 | 热力图配置和基础样式存在；自动 Jenks 分级设色和完整专题图工作流仍不完整 |
+| 44–46 缓存、限流、用户隔离 | Redis 会话/上传/空间记忆和外部服务超时兜底已实现；生产级 QPS 限流、认证和多用户安全隔离不在当前单机目标内 |
+| 47–51 Hooks / Preflight / Risk / Toolkit / Skill | 基础框架和 handler 已存在；`AFTER_TOOL_CALL` 结果风险检测未进入主链，`inspect_workspace`、`suggest_skill`、`proactive_clarification` 等 Kernel 语义仍是简化或占位实现 |
+
+### 当前未实现的设计能力
+
+| 层 | 缺失能力 | 说明 |
+|----|----------|------|
+| 数据获取 | 实时交通路况（10）、街景抓取（11） | 没有对应公开工具和完整链路 |
+| 空间分析 | 视线/通视（16）、地形剖面（17 的一部分） | 现有 DEM 工具不包含视线与剖面算法 |
+| 遥感气象 | DEM 自动获取（21）、遥感影像/NDVI（22）、气象叠加（23）、时序分析（24） | 本地 Raster 计算已实现，但外部数据获取和时序工作流未实现 |
+| 可视化交付 | 3D 地形（28）、时序动画（29）、MarkerCluster（30）、PDF/Markdown 报告生成（31） | 尚无完整前后端耦合链路 |
+| 工程 | 生产认证、完整限流、多用户隔离、任务队列/worker | 当前定位是单机自用，不是公网多租户服务 |
+| 可观测性辅助 | `utils/logging.py`（structlog） | 文档有设计，当前没有该独立实现；不要与已有标准 logging/trace 混淆 |
 
 **上传文件链路**：`app/api/upload.py` 的 `_persist_upload` 写入 Redis `upload:{file_id}`（TTL 1h），`data_io_read` 从 Redis 取 bytes 再解析。
