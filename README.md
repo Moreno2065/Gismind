@@ -119,7 +119,9 @@ npm run build
 ```powershell
 cd frontend
 npx playwright install chromium
-npm run test:e2e
+# The runner requires local frontend/.env.local, backend/.env and backend/.venv.
+# It fails before test start if the frontend JS key or backend AMap service key is missing.
+npm run test:e2e:local
 ```
 
 Root Planner 真实服务冒烟需要先启动后端，并会调用真实 LLM 和外部服务：
@@ -136,9 +138,9 @@ cd C:\path\to\Gismind
 
 ## 当前验证结论
 
-2026-08-25 的本地验证覆盖了文本 POI、浏览器上传、双文件叠加、追问恢复、停止、会话切换、刷新恢复以及错误态。确定性 Chromium 套件为 7 条通过。最新完整后端单元测试命令 `python -m pytest tests/unit -q` 的结果为 1247 条通过、1 条跳过；其中包含坐标、缓冲面积、叠加拓扑、属性字段、栅格统计和导出可读性等 GIS 语义检查。
+2026-08-31 的本地验证覆盖了文本 POI、浏览器上传、双文件叠加、追问恢复、停止、会话切换、刷新恢复以及错误态。确定性 Chromium 套件为 32 条通过；后端完整测试为 1517 条通过、2 条跳过、0 条失败（共 1519 个测试项）。其中包含坐标、缓冲面积、叠加拓扑、属性字段、栅格统计、上传过期语义和导出 CRS 可读性等 GIS 语义检查。可复跑命令和机器可读证据见 [单机运行状态](docs/LOCAL_SINGLE_MACHINE_STATUS.md)。
 
-真实 LLM/外部服务会受到模型和数据源波动影响。最近一次 7 条 Root Planner 冒烟中 6 条通过，1 条 POI 查询因外部结果为空失败。因此这些冒烟用于发现风险，不应被描述成确定性回归。
+真实 LLM/外部服务会受到模型和数据源波动影响。2026-08-31 的 7 条 Root Planner 受控冒烟为 7/7：6 条由 `root_llm` 规划、1 条由安全 `guardrail` 规划、0 条由 `fallback` 规划。该套件记录 `planner_source` 和黄金语义断言，不应把 guardrail 命中描述成 Root LLM 理解能力证明。
 
 ## 已知限制
 

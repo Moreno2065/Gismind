@@ -2,7 +2,7 @@
 
 > 分层测试体系。坐标转换是万恶之源，必须有黄金用例回归基线。
 > 数据模型见 [02_data_models.md](02_data_models.md)，API 契约见 [01_api_spec.md](01_api_spec.md)。
-> 2026-08-25 的单机验证范围、结果数字与已知边界见 [Gismind 单机运行状态](LOCAL_SINGLE_MACHINE_STATUS.md)。
+> 2026-08-31 的单机验证范围、结果数字与已知边界见 [Gismind 单机运行状态](LOCAL_SINGLE_MACHINE_STATUS.md)。当前确定性 Chromium 套件为 32 条，后端完整测试为 1517 条通过、2 条跳过。
 
 ---
 
@@ -509,13 +509,13 @@ def test_parse_result_sentinel():
 
 ## 4. E2E 测试场景
 
-对齐原文档 §9 的三个杀手级场景。使用 Playwright。
+对齐原文档 §9 的三个杀手级场景。使用 Playwright；当前完整套件共 32 条 Chromium 用例，覆盖稳定耦合链路和 GIS 结果正确性。
 
 ### 4.0 Root Planner 同义表达实测（HTTP/SSE）
 
 `blackbox/root_planner_synonym_suite.py` 通过公开 HTTP API 发送真实请求，解析 SSE 的 `run.plan`、`tool.call.*`、`map`、`done/error` 事件，并核对可执行参数和关键数值。它不替代可重复的 pytest：该套件依赖已配置的 LLM、高德和 Overpass，适合作为单机发布前的实测记录，**不应**作为无网络 CI 的必过门槛。
 
-当前套件覆盖：周边 POI、GPS→高德坐标、上传 `class == station`、面交集、DEM 坡度 15°/30° 分级、多轮茶百道/蜜雪冰城数量比较，以及上传面缓冲 GeoJSON 导出。每个 case 在 `root_planner_synonym_cases.json` 声明允许的 `planner_source`：一般请求为 `root_llm`，闭合契约为 `guardrail`。
+当前套件覆盖：周边 POI、GPS→高德坐标、上传 `class == station`、面交集、DEM 坡度 15°/30° 分级、多轮茶百道/蜜雪冰城数量比较，以及上传面缓冲 GeoJSON 导出。每个 case 在 `root_planner_synonym_cases.json` 声明允许的 `planner_source`：一般请求为 `root_llm`，闭合契约为 `guardrail`。2026-08-31 的真实服务记录为 7/7（`root_llm` 6 条、`guardrail` 1 条、`fallback` 0 条）；这组数字不代表未来真实外部服务运行必然稳定。
 
 通过标准：HTTP 200、计划工具/依赖/必需参数正确、所有终态工具成功、需要地图时地图非空、存在 `done` 且没有 `run.failed/error`，以及坐标/导出等 case 专属语义断言通过。
 

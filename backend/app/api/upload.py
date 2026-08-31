@@ -35,6 +35,29 @@ router = APIRouter()
 ALLOWED_EXT = {".zip", ".geojson", ".json", ".kml", ".tif", ".tiff"}
 
 
+def _remove_expired_upload(path: Path, *, attempts: int = 3) -> bool:
+    """Best-effort removal that tolerates short-lived Windows file locks."""
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if attempt + 1 < attempts:
+                time.sleep(0.05 * (attempt + 1))
+                continue
+            logger.warning(
+                "expired upload cleanup deferred because payload is locked: %s",
+                path,
+            )
+            return False
+        except OSError:
+            logger.warning("expired upload cleanup failed: %s", path, exc_info=True)
+            return False
+    return False
+
+
 def validate_file_type(filename: str) -> str:
     """校验扩展名白名单，返回小写扩展名。"""
     ext = os.path.splitext(filename)[1].lower()
@@ -251,7 +274,10 @@ async def _persist_upload(file_id: str, content: bytes, filename: str) -> None:
                     and resolved.parent == upload_root.resolve()
                     and candidate.stat().st_mtime < cutoff
                 ):
-                    shutil.rmtree(resolved)
+                    _remove_expired_upload(resolved)
+            except FileNotFoundError:
+                # Another concurrent upload cleanup already removed it.
+                continue
             except OSError:
                 logger.warning("expired upload cleanup failed: %s", candidate, exc_info=True)
         file_dir.mkdir(parents=True, exist_ok=True)

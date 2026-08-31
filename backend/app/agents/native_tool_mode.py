@@ -211,15 +211,8 @@ def build_native_tool_schemas(tool_names: list[str]) -> list[dict[str, Any]]:
 
 def validate_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Apply the deterministic subset of JSON Schema needed at the executor boundary."""
-    if not isinstance(arguments, dict):
-        raise ToolArgumentValidationError(f"{tool_name} arguments must be an object")
+    normalized = validate_tool_argument_subset(tool_name, arguments)
     schema = build_native_tool_schema(tool_name)["function"]["parameters"]
-    properties = schema["properties"]
-    unknown = sorted(set(arguments) - set(properties))
-    if unknown:
-        raise ToolArgumentValidationError(
-            f"{tool_name} received unexpected arguments: {', '.join(unknown)}"
-        )
     missing = [name for name in schema["required"] if arguments.get(name) in (None, "")]
     if missing:
         raise ToolArgumentValidationError(
@@ -230,6 +223,26 @@ def validate_tool_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[s
             raise ToolArgumentValidationError(
                 "extract_by_attribute requires expression or field and operator"
             )
+    return normalized
+
+
+def validate_tool_argument_subset(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Validate supplied native-tool arguments without requiring a full call.
+
+    Root planning only owns exact scalar constraints.  Runtime references and
+    upload identities are bound later by the Dispatcher, so checking a partial
+    mapping here prevents invalid root parameters without incorrectly requiring
+    parameters that are intentionally supplied at execution time.
+    """
+    if not isinstance(arguments, dict):
+        raise ToolArgumentValidationError(f"{tool_name} arguments must be an object")
+    schema = build_native_tool_schema(tool_name)["function"]["parameters"]
+    properties = schema["properties"]
+    unknown = sorted(set(arguments) - set(properties))
+    if unknown:
+        raise ToolArgumentValidationError(
+            f"{tool_name} received unexpected arguments: {', '.join(unknown)}"
+        )
     for name, value in arguments.items():
         _validate_value(tool_name, name, value, properties[name])
     return dict(arguments)

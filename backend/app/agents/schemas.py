@@ -205,7 +205,7 @@ class SubAgentOutcome(BaseModel):
     task_id: str
     run_id: str
     agent_role: str
-    status: Literal["success", "refined", "failed", "awaiting_input"]
+    status: Literal["success", "refined", "empty", "failed", "awaiting_input"]
     artifacts: dict[str, Any] = Field(default_factory=dict)
     duration_ms: int = 0
     iteration_used: int = 0

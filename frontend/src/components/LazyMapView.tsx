@@ -34,6 +34,7 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
   const mapRef = useRef<any>(null);
   const AMapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
+  const rasterOverlaysRef = useRef<Set<any>>(new Set());
   const layersRef = useRef(layers);
   const bboxRef = useRef(safeBbox);
   const prevLayersJsonRef = useRef(JSON.stringify(layers));
@@ -41,6 +42,8 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [renderedVectorOverlayCount, setRenderedVectorOverlayCount] = useState(0);
+  const [renderedRasterOverlayCount, setRenderedRasterOverlayCount] = useState(0);
 
   // 保持 ref 为最新值，供稳定回调使用
   layersRef.current = layers;
@@ -74,6 +77,17 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
     const nonRasterLayers = layersRef.current.filter((l) => l.type !== 'raster');
     const newOverlays = renderLayersOnMap(map, AMap, nonRasterLayers, bboxRef.current);
     overlaysRef.current = newOverlays;
+    setRenderedVectorOverlayCount(newOverlays.length);
+  }, []);
+
+  const handleRasterReady = useCallback((overlay: any) => {
+    rasterOverlaysRef.current.add(overlay);
+    setRenderedRasterOverlayCount(rasterOverlaysRef.current.size);
+  }, []);
+
+  const handleRasterDispose = useCallback((overlay: any) => {
+    rasterOverlaysRef.current.delete(overlay);
+    setRenderedRasterOverlayCount(rasterOverlaysRef.current.size);
   }, []);
 
   // 3. 视口可见时加载地图，不可见时销毁
@@ -119,6 +133,7 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
         }
       }
       overlaysRef.current = [];
+      setRenderedVectorOverlayCount(0);
       try {
         mapRef.current.destroy();
       } catch {
@@ -177,6 +192,10 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
   return (
     <>
       <div
+        data-testid="lazy-map"
+        data-map-ready={mapRef.current != null && !loading && !loadError ? 'true' : 'false'}
+        data-vector-overlay-count={renderedVectorOverlayCount}
+        data-raster-overlay-count={renderedRasterOverlayCount}
         className="relative mt-3 overflow-hidden rounded-lg border border-ink-700 bg-ink-900"
         style={{ height: PLACEHOLDER_HEIGHT }}
       >
@@ -186,7 +205,15 @@ export function LazyMapView({ layers, bbox, expired, featureCount, onBeforeLoad,
         {/* 栅格图层 — 使用 React 组件管理 ImageOverlay 生命周期 */}
         {isVisible && !loading && !loadError && mapRef.current && (
           layers.filter((l): l is RasterLayer => l.type === 'raster').map((layer, i) => (
-            <RasterOverlay key={i} map={mapRef.current} layer={layer} onError={console.warn} />
+            <RasterOverlay
+              key={i}
+              map={mapRef.current}
+              AMap={AMapRef.current}
+              layer={layer}
+              onError={console.warn}
+              onReady={handleRasterReady}
+              onDispose={handleRasterDispose}
+            />
           ))
         )}
 

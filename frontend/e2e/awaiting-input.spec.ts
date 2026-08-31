@@ -136,9 +136,17 @@ test.describe('awaiting-input real wiring', () => {
       status: string;
       session_id: string;
       sub_agent_run_id?: string;
+      resume_provenance?: {
+        source_sub_agent_run_id?: string;
+        source_checkpoint_id?: string;
+        resume_run_id?: string;
+      };
     };
     expect(resumeJson.status).toBe('resumed');
     expect(resumeJson.sub_agent_run_id).toBe(body.sub_agent_run_id);
+    expect(resumeJson.resume_provenance?.source_sub_agent_run_id).toBe(body.sub_agent_run_id);
+    expect(resumeJson.resume_provenance?.source_checkpoint_id).toBeTruthy();
+    expect(resumeJson.resume_provenance?.resume_run_id).toMatch(/^run_/);
 
     // UI: awaiting banner cleared after successful resume.
     await expect(banner).toHaveCount(0, { timeout: 30_000 });

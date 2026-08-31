@@ -309,6 +309,14 @@ def _gdf_to_dict(gdf) -> dict:
         import json
         result = json.loads(gdf.to_json())
         crs_label = gdf.attrs.get("crs_label")
+        if not crs_label and getattr(gdf, "crs", None) is not None:
+            epsg = gdf.crs.to_epsg()
+            if epsg == 4326:
+                crs_label = "WGS84"
+            elif epsg is not None:
+                crs_label = f"EPSG:{epsg}"
+            else:
+                crs_label = gdf.crs.to_string()
         if crs_label:
             result["_crs_label"] = crs_label
         return result
@@ -641,6 +649,7 @@ def _handle_query_poi(ctx: _ToolContext) -> ToolResult:
         status=raw.get("status", "empty"),
         data=merged_data if merged_data else raw.get("data"),
         message=raw.get("message"),
+        error_code=raw.get("error_code"),
         source=raw.get("source"),
     )
 
@@ -858,7 +867,8 @@ def _handle_data_io_read(ctx: _ToolContext) -> ToolResult:
         return ToolResult(
             tool_call_id=ctx.tool_call_id,
             tool_name="data_io_read",
-            status="empty",
+            status="error",
+            error_code=ErrorCode.INVALID_PARAMS.value,
             message="data_io_read 需要 file_id",
         )
     upload_record = _run_async(_read_upload_from_redis(file_id))
@@ -866,7 +876,8 @@ def _handle_data_io_read(ctx: _ToolContext) -> ToolResult:
         return ToolResult(
             tool_call_id=ctx.tool_call_id,
             tool_name="data_io_read",
-            status="empty",
+            status="error",
+            error_code=ErrorCode.UPLOAD_EXPIRED.value,
             message="上传文件已过期或不存在",
         )
     try:
@@ -2139,6 +2150,8 @@ def native_tool_executor_node(state: dict) -> dict:
 
     tr: ToolResult
     pending_task: dict | None = None
+    args: dict[str, Any] = {}
+    reference_data: dict[int, Any] = {}
     if tool_name not in spec.tool_names:
         tr = ToolResult(
             tool_call_id=call_id,
@@ -2202,12 +2215,13 @@ def native_tool_executor_node(state: dict) -> dict:
                         "layer_builder": MapLayerBuilder(),
                         "raster_analyzer": RasterAnalyzer(),
                     }
+                    reference_data = native_reference_data(state)
                     ctx = _ToolContext(
                         tool_call_id=call_id,
                         tool_name=tool_name,
                         iteration=state.get("iteration", 0),
                         params=args,
-                        results_data=native_reference_data(state),
+                        results_data=reference_data,
                         instances=instances,
                     )
                     try:
@@ -2262,6 +2276,42 @@ def native_tool_executor_node(state: dict) -> dict:
                             message=f"{type(exc).__name__}: {exc}",
                         )
 
+    if tr.status == "success":
+        # Handlers can return structurally valid data that is still spatially
+        # wrong (for example an out-of-radius POI or an export whose reported
+        # count does not match the file).  Reject it before Observer and
+        # Dispatcher can turn it into an answer, map layer, or dependency.
+        from app.agents.postconditions import (
+            postcondition_failure_message,
+            validate_tool_postconditions,
+        )
+
+        semantic_issues = validate_tool_postconditions(
+            tool_name,
+            tr.data,
+            params=args,
+            dependencies=reference_data,
+        )
+        if semantic_issues:
+            tr.status = "error"
+            tr.error_code = "SEMANTIC_POSTCONDITION_FAILED"
+            tr.message = postcondition_failure_message(semantic_issues)
+            emit_event(
+                on_event,
+                "tool.postcondition.failed",
+                tr.message,
+                tool_name=tool_name,
+                error_code=tr.error_code,
+                issues=[{"code": issue.code, "message": issue.message} for issue in semantic_issues],
+                task_id=state.get("parent_task_id") or "",
+                agent_role=state.get("agent_role") or "",
+            )
+        else:
+            # Preserve the validated actual call as structured provenance.
+            # This deliberately uses schema-checked values rather than model
+            # prose or raw arguments.
+            tr.params = dict(args)
+
     existing = list(state.get("tool_results") or [])
     measured_duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
     if tr.duration_ms <= 0:
@@ -2281,6 +2331,7 @@ def native_tool_executor_node(state: dict) -> dict:
             result_preview = preview_json[:2000] + "... (truncated)"
     except Exception:  # noqa: BLE001 - tracing must never break tool execution
         result_preview = str(result_preview)[:2000]
+    semantic_summary = _tool_semantic_summary(tool_name, tr.data) if tr.status == "success" else None
     emit_event(
         on_event,
         "tool.call.complete",
@@ -2291,6 +2342,7 @@ def native_tool_executor_node(state: dict) -> dict:
         error_code=tr.error_code,
         duration_ms=tr.duration_ms,
         result=result_preview,
+        semantic=semantic_summary,
         task_id=state.get("parent_task_id") or "",
         agent_role=state.get("agent_role") or "",
     )
@@ -2307,6 +2359,41 @@ def native_tool_executor_node(state: dict) -> dict:
     if pending_task is not None:
         result["pending_task"] = pending_task
     return result
+
+
+def _tool_semantic_summary(tool_name: str, data: Any) -> dict[str, Any] | None:
+    """Return a bounded, result-derived evidence record for public SSE traces.
+
+    Full result previews are intentionally capped, but a live correctness
+    runner must still be able to prove POI count/radius/map agreement without
+    trusting planner prose or a provider's original ``distance`` field.
+    """
+
+    if tool_name != "query_poi" or not isinstance(data, dict):
+        return None
+    pois = data.get("pois")
+    center = data.get("center")
+    radius = data.get("radius_m")
+    tolerance = data.get("radius_tolerance_m")
+    if not isinstance(pois, list) or not isinstance(center, (list, tuple)) or len(center) != 2:
+        return None
+    if not isinstance(radius, (int, float)) or not isinstance(tolerance, (int, float)):
+        return None
+    distances = [
+        float(poi["distance"])
+        for poi in pois
+        if isinstance(poi, dict) and isinstance(poi.get("distance"), (int, float))
+    ]
+    return {
+        "kind": "poi_radius",
+        "query": data.get("query"),
+        "poi_count": len(pois),
+        "center": [float(center[0]), float(center[1])],
+        "radius_m": float(radius),
+        "radius_tolerance_m": float(tolerance),
+        "crs": data.get("crs"),
+        "max_distance_m": max(distances, default=0.0),
+    }
 
 
 def native_step_finalize_node(state: dict) -> dict:
@@ -2390,6 +2477,43 @@ def native_step_finalize_node(state: dict) -> dict:
             "should_stop": True,
             "decision": "FINISH",
             "final_output": final_output,
+        }
+
+    if status == "empty":
+        # Zero rows/features from a successfully executed query are data, not
+        # a parameter failure.  Stop here so the planner does not repeat the
+        # same provider call merely because its valid result set is empty.
+        data = (
+            getattr(last, "data", None)
+            if hasattr(last, "data")
+            else last.get("data") if isinstance(last, dict)
+            else None
+        )
+        source = (
+            getattr(last, "source", None)
+            if hasattr(last, "source")
+            else last.get("source") if isinstance(last, dict)
+            else None
+        )
+        message = (
+            getattr(last, "message", None)
+            if hasattr(last, "message")
+            else last.get("message") if isinstance(last, dict)
+            else None
+        )
+        return {
+            "should_stop": True,
+            "decision": "FINISH",
+            "final_output": {
+                "status": "empty",
+                "summary": message or f"{tool_name} 未返回符合条件的数据",
+                "results": [{
+                    "tool_name": tool_name,
+                    "source": source,
+                    "data": data,
+                    "truncated": False,
+                }],
+            },
         }
 
     error_code = (
@@ -2697,6 +2821,27 @@ def _build_code_mode_tool_fns(
                 except ImportError:
                     # preflight 模块不可用时回退到直接调用
                     result = h(ctx)
+
+                # Code-mode is not exempt from the same result contract as
+                # schema-first execution.  Returning only the error envelope
+                # below prevents sandbox code from treating a semantically
+                # impossible GIS output as ordinary data.
+                if isinstance(result, ToolResult) and result.status == "success":
+                    from app.agents.postconditions import (
+                        postcondition_failure_message,
+                        validate_tool_postconditions,
+                    )
+
+                    semantic_issues = validate_tool_postconditions(
+                        n,
+                        result.data,
+                        params=kwargs,
+                        dependencies=results_data,
+                    )
+                    if semantic_issues:
+                        result.status = "error"
+                        result.error_code = "SEMANTIC_POSTCONDITION_FAILED"
+                        result.message = postcondition_failure_message(semantic_issues)
 
                 # KERNEL 工具的选择需要跨 code block 生效。host RPC 与调用者
                 # 共享这份 dict，因此把选择写入 session_vars，下一轮重建

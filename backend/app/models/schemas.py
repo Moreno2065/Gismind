@@ -57,6 +57,10 @@ class ToolResult(BaseModel):
         default=None,
         description="数据来源：Amap / OSM_CN / OSM_Global / Upload / inline / async / sandbox",
     )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="实际通过 schema 校验并交给 handler 的参数；用于产物溯源，不用于 LLM 自由推断",
+    )
     truncated: bool = False
     mode: Optional[str] = Field(
         default=None,

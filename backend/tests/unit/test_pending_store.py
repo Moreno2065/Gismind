@@ -226,12 +226,15 @@ class TestPendingStoreWithMock:
         mock_r.get.assert_awaited_once_with("pending:sess_mock")
 
     def test_clear_calls_redis_delete(self):
-        """clear 触发 redis.delete(key)。"""
+        """clear 原子清除 pending 与 resume claim，避免留下失效租约。"""
         mock_r = self._make_async_mock()
         store = PendingStore(redis_client=mock_r)
 
         _run(store.clear("sess_mock"))
-        mock_r.delete.assert_awaited_once_with("pending:sess_mock")
+        mock_r.delete.assert_awaited_once_with(
+            "pending:sess_mock",
+            "pending-claim:sess_mock",
+        )
 
     def test_save_load_round_trip_with_mock(self):
         """Mock Redis 模拟完整 round-trip。"""
@@ -244,9 +247,11 @@ class TestPendingStoreWithMock:
         async def _get(key):
             return backing.get(key)
 
-        async def _delete(key):
-            backing.pop(key, None)
-            return 1
+        async def _delete(*keys):
+            deleted = 0
+            for key in keys:
+                deleted += int(backing.pop(key, None) is not None)
+            return deleted
 
         mock_r = MagicMock()
         # Use plain functions (not Mock attributes) for backing-store behavior

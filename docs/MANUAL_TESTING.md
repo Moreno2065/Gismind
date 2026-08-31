@@ -2,7 +2,7 @@
 
 Gismind 工具的"准确不准"判定手册。当 Agent 给的答案看着不对劲时，按这份手册做。
 
-v1.4，更新于 2026-08-25——补充真实 Chromium 前后端耦合、规划来源和 Root Planner 真实服务冒烟口径。当前单机可用性结论见 [Gismind 单机运行状态](LOCAL_SINGLE_MACHINE_STATUS.md)。
+v1.5，更新于 2026-08-31——补充 32 条真实 Chromium 前后端耦合结果、规划来源统计和导出 CRS 语义核验口径。当前单机可用性结论见 [Gismind 单机运行状态](LOCAL_SINGLE_MACHINE_STATUS.md)。
 
 ---
 

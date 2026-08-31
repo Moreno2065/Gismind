@@ -213,14 +213,14 @@ export function renderLayersOnMap(
         }
       }
     } else if (layer.type === 'raster') {
-      // Raster layer via AMap ImageOverlay
+      // Raster layer via AMap v2 ImageLayer
       try {
         const dataUrl = `data:image/png;base64,${layer.png_b64}`;
         const [minx, miny, maxx, maxy] = layer.bbox;
         const sw = new AMap.LngLat(minx, miny);
         const ne = new AMap.LngLat(maxx, maxy);
         const bounds = new AMap.Bounds(sw, ne);
-        const overlay = new AMap.ImageOverlay({
+        const overlay = new AMap.ImageLayer({
           url: dataUrl,
           bounds,
           opacity: layer.opacity ?? 0.7,

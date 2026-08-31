@@ -48,7 +48,7 @@ export interface FeatureCollectionLayer {
   style?: Record<string, unknown>;
 }
 
-/** 栅格瓦片层 — base64 PNG + bbox，使用 AMap ImageOverlay 渲染 */
+/** 栅格瓦片层 — base64 PNG + bbox，使用 AMap ImageLayer 渲染 */
 export interface RasterLayer {
   type: 'raster';
   png_b64: string;        // base64 encoded PNG
@@ -295,6 +295,8 @@ export interface RunFailedEvent extends StreamEventBase {
   event_type: 'run.failed';
   error?: string;
   error_code?: string;
+  terminal_status?: 'failed' | 'partial';
+  failed_tasks?: Array<Record<string, unknown>>;
 }
 
 export interface WorkflowPlanTask {

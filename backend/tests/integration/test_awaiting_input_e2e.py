@@ -213,6 +213,29 @@ class TestPendingStoreIntegration:
         assert saved.slot_patch_schema.get("distance", {}).get("type") == "number"
         await store.clear(unique_session_id)
 
+    @pytest.mark.asyncio
+    async def test_pending_claim_is_atomic_and_keeps_the_task_until_release(
+        self, real_redis, unique_session_id
+    ):
+        """Two real Redis claimers may not resume the same pending task together."""
+        import asyncio
+
+        store = PendingStore(redis_client=real_redis)
+        pending = _sample_pending(run_id="run_atomic_claim")
+        await store.save(unique_session_id, pending)
+
+        claims = await asyncio.gather(
+            store.claim(unique_session_id, pending.sub_agent_run_id),
+            store.claim(unique_session_id, pending.sub_agent_run_id),
+        )
+        tokens = [token for token in claims if token]
+        assert len(tokens) == 1
+        assert await store.load(unique_session_id) is not None
+
+        await store.release_claim(unique_session_id, tokens[0])
+        assert await store.claim(unique_session_id, pending.sub_agent_run_id)
+        await store.clear(unique_session_id)
+
 
 # ---------------------------------------------------------------------------
 # Outcome / dispatch propagation (no mock)
@@ -317,6 +340,22 @@ def _clear_pending_sync(redis_url: str, session_id: str) -> None:
     asyncio.run(_clear())
 
 
+def _claim_pending_sync(redis_url: str, session_id: str, sub_agent_run_id: str) -> str | None:
+    """Acquire the real Redis resume lease from a second, loop-safe client."""
+    import asyncio
+
+    from app.utils.redis import create_redis_client
+
+    async def _claim() -> str | None:
+        r = create_redis_client(redis_url)
+        try:
+            return await PendingStore(redis_client=r).claim(session_id, sub_agent_run_id)
+        finally:
+            await r.aclose()
+
+    return asyncio.run(_claim())
+
+
 class TestResumeChatEndpoint:
     def test_resume_not_found_when_no_pending_task(self, app_client, unique_session_id):
         client, _app, _redis_url, _cp = app_client
@@ -381,6 +420,32 @@ class TestResumeChatEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "invalid_answer"
+        assert _load_pending_sync(redis_url, unique_session_id) is not None
+        _clear_pending_sync(redis_url, unique_session_id)
+
+    def test_resume_in_progress_preserves_pending_and_never_invokes_a_second_dag(
+        self, app_client, unique_session_id
+    ):
+        """A real Redis lease makes a duplicate browser resume an explicit retry state."""
+        client, _app, redis_url, cp = app_client
+        pt = _sample_pending(with_schema=True)
+        _seed_pending_sync(redis_url, unique_session_id, pt)
+
+        graph = build_dispatcher(checkpointer=cp, interrupt_before=["planner_router"])
+        config = {"configurable": {"thread_id": unique_session_id}}
+        graph.invoke(
+            dict(new_root_state(pt.original_request, session_id=unique_session_id)),
+            config=config,
+        )
+        assert _claim_pending_sync(redis_url, unique_session_id, pt.sub_agent_run_id)
+
+        resp = client.post(
+            f"/api/chat/{unique_session_id}/resume",
+            json={"sub_agent_run_id": pt.sub_agent_run_id, "answer": "500米"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "in_progress"
         assert _load_pending_sync(redis_url, unique_session_id) is not None
         _clear_pending_sync(redis_url, unique_session_id)
 
@@ -479,7 +544,7 @@ class TestResumeChatEndpoint:
             # After successful replan, should not remain stuck on same awaiting pending.
             if isinstance(fo, dict) and fo.get("status") == "awaiting_input":
                 pending = fo.get("pending_task") or {}
-                assert pending.get("sub_agent_run_id") != pt.sub_agent_run_id or True
+                assert pending.get("sub_agent_run_id") != pt.sub_agent_run_id
         elif data["status"] in {"invoke_failed", "invoke_noop"}:
             # Must retain pending on no-op / failure.
             assert _load_pending_sync(redis_url, unique_session_id) is not None
@@ -531,6 +596,126 @@ class TestDispatcherPendingResume:
         assert "500" in result.get("user_input", "")
         assert result["task_plan"]["tasks"][0]["id"] == "t1"
         assert llm.calls == ["planner"]
+
+    def test_planner_router_resume_reuses_only_exact_prior_successes(self):
+        """A resumed DAG skips an upstream result only when its identity is unchanged."""
+        plan = _plan_json(
+            [
+                {
+                    "id": "read",
+                    "agent_role": "geometer",
+                    "tool_name": "data_io_read",
+                    "goal": "读取上传面图层",
+                    "depends_on": [],
+                    "expected_artifacts": [],
+                },
+                {
+                    "id": "buffer",
+                    "agent_role": "geometer",
+                    "tool_name": "buffer",
+                    "goal": "为上传面创建500米缓冲区",
+                    "depends_on": ["read"],
+                    "expected_artifacts": [],
+                    "tool_args": {"radius_m": 500},
+                },
+            ]
+        )
+        prior_plan = TaskPlan(
+            tasks=[
+                SubTask(
+                    id="read",
+                    agent_role="geometer",
+                    tool_name="data_io_read",
+                    goal="读取上传面图层",
+                    tool_args={"file_id": "file_browser"},
+                ),
+                SubTask(
+                    id="buffer",
+                    agent_role="geometer",
+                    tool_name="buffer",
+                    goal="为上传面创建500米缓冲区",
+                    depends_on=["read"],
+                    tool_args={"radius_m": 500},
+                ),
+            ]
+        ).model_dump()
+        prior_results = {
+            "read": [
+                {
+                    "task_id": "read",
+                    "run_id": "sub_read_1",
+                    "agent_role": "geometer",
+                    "status": "success",
+                    "artifacts": {"result": {"feature_count": 2}},
+                }
+            ]
+        }
+        llm = DeterministicLLM(planner=[plan])
+
+        result = planner_router_node(
+            {
+                "user_input": "500米",
+                "upload_file_ids": ["file_browser"],
+                "pending_task": {
+                    "sub_agent_run_id": "r1",
+                    "original_request": "读取上传面图层并创建缓冲区",
+                },
+                "resume_patch": {"distance": 500.0},
+                "resume_prior_task_plan": prior_plan,
+                "resume_prior_sub_results": prior_results,
+                "session_id": "s1",
+            },
+            llm=llm,
+        )
+
+        assert result["sub_results"] == prior_results
+
+    def test_planner_router_resume_never_reuses_a_changed_task_goal(self):
+        """A changed Root task must execute again rather than reuse stale geometry."""
+        plan = _plan_json(
+            [
+                {
+                    "id": "read",
+                    "agent_role": "geometer",
+                    "tool_name": "data_io_read",
+                    "goal": "读取另一份上传面图层",
+                    "depends_on": [],
+                    "expected_artifacts": [],
+                }
+            ]
+        )
+        prior_plan = TaskPlan(
+            tasks=[
+                SubTask(
+                    id="read",
+                    agent_role="geometer",
+                    tool_name="data_io_read",
+                    goal="读取上传面图层",
+                    tool_args={"file_id": "file_browser"},
+                )
+            ]
+        ).model_dump()
+        llm = DeterministicLLM(planner=[plan])
+
+        result = planner_router_node(
+            {
+                "user_input": "继续",
+                "upload_file_ids": ["file_browser"],
+                "pending_task": {
+                    "sub_agent_run_id": "r1",
+                    "original_request": "读取上传面图层",
+                },
+                "resume_patch": {"distance": 500.0},
+                "resume_prior_task_plan": prior_plan,
+                "resume_prior_sub_results": {
+                    "read": [{"status": "success", "agent_role": "geometer"}]
+                },
+                "session_id": "s1",
+            },
+            llm=llm,
+        )
+
+        assert result.get("sub_results") in (None, {})
 
     def test_planner_router_no_resume_when_no_pending(self):
         plan = _plan_json(
@@ -587,7 +772,7 @@ class TestDispatcherPendingResume:
             llm=llm,
         )
         # Without resume_patch, is_resume_replan is False — pending not cleared by router.
-        assert "pending_task" not in result or result.get("pending_task") is not None or True
+        assert "pending_task" not in result
         assert result["task_plan"]["tasks"][0]["id"] == "t1"
 
 

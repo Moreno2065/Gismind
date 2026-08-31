@@ -196,6 +196,132 @@ DISPATCHER_PROMPT = """你是 Gismind 的 Root Dispatcher。把用户的自然�
 """
 
 
+_ROOT_DATA_PLANE_ARGS = frozenset({
+    "file_id",
+    "file_path",
+    "output_path",
+    "path",
+    "dem_path",
+    "raster_path",
+    "vector_path",
+    "src_path",
+    "dst_path",
+    "location_from",
+    "geometry_from",
+    "geometry_a_from",
+    "geometry_b_from",
+    "points_from",
+    "data_from",
+    "input_ref",
+    "overlay_ref",
+    "mask_from",
+    "layers_from",
+    "other_ref",
+    "join_from",
+    "polygons_from",
+    "raster_from",
+    "vector_from",
+    "dem_from",
+    "src_from",
+})
+
+
+_SINGLE_DEPENDENCY_REFERENCE_ARG = {
+    "query_poi": "location_from",
+    "buffer": "geometry_from",
+    "voronoi": "points_from",
+    "isochrone": "location_from",
+    "map_layer_build": "data_from",
+    "dissolve_layer": "input_ref",
+    "convex_hull": "input_ref",
+    "bounding_boxes": "input_ref",
+    "centroid_layer": "input_ref",
+    "point_on_surface": "input_ref",
+    "simplify_geometry": "input_ref",
+    "fix_geometries": "input_ref",
+    "check_validity": "input_ref",
+    "reproject_layer": "input_ref",
+    "extract_by_attribute": "input_ref",
+    "keep_fields": "input_ref",
+    "rename_field": "input_ref",
+    "field_calculator": "input_ref",
+    "slope": "dem_from",
+    "aspect": "dem_from",
+    "hillshade": "dem_from",
+    "reclassify_raster": "src_from",
+    "export_result": "data_from",
+}
+
+
+_TWO_DEPENDENCY_REFERENCE_ARGS = {
+    "overlay": ("geometry_a_from", "geometry_b_from"),
+    "clip_layer": ("input_ref", "overlay_ref"),
+    "join_by_location": ("input_ref", "other_ref"),
+    "join_by_nearest": ("input_ref", "other_ref"),
+    "extract_by_location": ("input_ref", "mask_ref"),
+    "zonal_statistics": ("raster_from", "vector_from"),
+}
+
+
+def _validate_root_task_args(task: SubTask) -> None:
+    """Validate only root-owned scalar constraints for one atomic task.
+
+    File identities, output paths and dependency references are data-plane
+    values.  A Root LLM cannot safely own them: the Dispatcher validates and
+    binds them from the browser payload and DAG below.
+    """
+    args = dict(task.tool_args or {})
+    forbidden = sorted(set(args) & _ROOT_DATA_PLANE_ARGS)
+    if forbidden:
+        raise ValueError(
+            f"workflow task {task.id!r} must not set runtime data-plane args: "
+            f"{', '.join(forbidden)}"
+        )
+    if not args:
+        return
+    from app.agents.native_tool_mode import validate_tool_argument_subset
+
+    validate_tool_argument_subset(str(task.tool_name or ""), args)
+
+
+def _bind_deterministic_task_args(plan: TaskPlan, upload_file_ids: list[str]) -> TaskPlan:
+    """Bind browser upload order and DAG dependency references at the root.
+
+    The model still owns task decomposition and user-visible scalar intent.  It
+    never chooses a ``file_id`` or runtime catalog index: upload readers are
+    assigned in browser order, and every downstream reference is derived from
+    the already-validated ``depends_on`` ordering.
+    """
+    upload_ids = [str(file_id) for file_id in upload_file_ids if str(file_id)]
+    readers = [task for task in plan.tasks if task.tool_name == "data_io_read"]
+    if readers:
+        if not upload_ids:
+            raise ValueError("data_io_read requires an uploaded file_id")
+        if len(readers) != len(upload_ids):
+            raise ValueError(
+                "data_io_read task count must equal uploaded file count for deterministic binding"
+            )
+        for task, file_id in zip(readers, upload_ids, strict=True):
+            task.tool_args = {**dict(task.tool_args or {}), "file_id": file_id}
+
+    for task in plan.tasks:
+        dependency_count = len(task.depends_on)
+        if dependency_count == 1:
+            reference_arg = _SINGLE_DEPENDENCY_REFERENCE_ARG.get(str(task.tool_name or ""))
+            if reference_arg:
+                task.tool_args = {**dict(task.tool_args or {}), reference_arg: 0}
+        elif dependency_count >= 2:
+            reference_args = _TWO_DEPENDENCY_REFERENCE_ARGS.get(str(task.tool_name or ""))
+            if reference_args:
+                first, second = reference_args
+                task.tool_args = {
+                    **dict(task.tool_args or {}),
+                    first: 0,
+                    second: 1,
+                }
+    return plan
+
+
 def _validate_root_workflow_tools(plan: TaskPlan) -> None:
     """Validate tool-level ownership for newly structured workflow plans.
 
@@ -220,6 +346,7 @@ def _validate_root_workflow_tools(plan: TaskPlan) -> None:
                 f"to incompatible role {task.agent_role!r}; allowed tools: "
                 f"{', '.join(spec.tool_names)}"
             )
+        _validate_root_task_args(task)
 
 
 def _validate_root_plan_semantics(
@@ -254,11 +381,9 @@ def _strong_constraint_guardrail_plan(
 ) -> TaskPlan | None:
     """Return only a narrowly bounded, parameter-exact safety guardrail.
 
-    Natural-language GIS requests normally remain Root-Planner work.  A small
-    set of closed, schema-backed contracts is exempt: an explicitly ordered
-    coordinate conversion, an uploaded ``class == station`` filter, and the
-    documented 15/30-degree DEM reclassification.  These routes preserve
-    executable arguments exactly instead of depending on model aliases.
+    Natural-language GIS requests normally remain Root-Planner work.  Only an
+    explicitly ordered coordinate conversion is exempt because applying the
+    wrong datum direction silently corrupts every downstream coordinate.
     """
     text = str(user_input or "")
 
@@ -302,25 +427,6 @@ def _strong_constraint_guardrail_plan(
         if -180 <= lng <= 180 and -90 <= lat <= 90:
             return coordinate_plan(lng, lat)
 
-    # Keep the closed uploaded-data contracts deterministic.  Do not route
-    # ordinary upload requests here: they need the Root Planner's decomposition.
-    if upload_file_ids and not history:
-        normalized = text.casefold()
-        is_station_filter = (
-            "class" in normalized
-            and any(token in normalized for token in ("station", "站点", "站點"))
-            and any(token in normalized for token in ("等于", "等於", "equal", "equals", "=="))
-            and not any(token in normalized for token in ("不等", "not equal", "!="))
-        )
-        is_dem_reclass = (
-            any(token in normalized for token in ("高程栅格", "dem", "elevation raster"))
-            and any(token in normalized for token in ("坡度", "slope"))
-            and "15" in text
-            and "30" in text
-        )
-        if is_station_filter or is_dem_reclass:
-            return _documented_prompt_plan(text, upload_file_ids, history)
-
     if upload_file_ids or history:
         return None
     wgs_at = upper.find("WGS84")
@@ -336,6 +442,64 @@ def _strong_constraint_guardrail_plan(
     if not (-180 <= lng <= 180 and -90 <= lat <= 90):
         return None
     return coordinate_plan(lng, lat)
+
+
+def _prune_redundant_count_comparison_coder(
+    plan: TaskPlan,
+    user_input: str,
+) -> TaskPlan:
+    """Drop leaf tasks when persisted POI facts already answer the turn.
+
+    ``assemble_node`` deterministically compares the current POI count with the
+    persisted prior turn.  Running model-generated Python, or re-querying the
+    prior brand, adds no capability and can turn a successful lookup into a
+    slow, misleading run.  Only leaf tasks in this narrowly recognized
+    follow-up are removed; the Root LLM still owns geocoding/current-query
+    decomposition.
+    """
+    if not _is_same_radius_density_followup(user_input):
+        return plan
+    if not any(task.tool_name == "query_poi" for task in plan.tasks):
+        return plan
+    dependency_ids = {
+        dependency_id
+        for task in plan.tasks
+        for dependency_id in task.depends_on
+    }
+    redundant_ids = {
+        task.id
+        for task in plan.tasks
+        if task.agent_role == "coder"
+        and task.tool_name == "code_executor"
+        and task.id not in dependency_ids
+        and any(marker in task.goal.casefold() for marker in ("比较", "对比", "密度", "count", "compare"))
+    }
+    has_current_chabaidao_query = any(
+        task.tool_name == "query_poi" and "茶百道" in task.goal.casefold()
+        for task in plan.tasks
+    )
+    if has_current_chabaidao_query:
+        redundant_ids.update(
+            task.id
+            for task in plan.tasks
+            if task.tool_name == "query_poi"
+            and task.id not in dependency_ids
+            and "蜜雪冰城" in task.goal.casefold()
+            and "茶百道" not in task.goal.casefold()
+        )
+    if not redundant_ids:
+        return plan
+    kept_tasks = [task for task in plan.tasks if task.id not in redundant_ids]
+    covered_instruction_ids = {task.instruction_id for task in kept_tasks}
+    kept_instructions = [
+        instruction
+        for instruction in plan.instructions
+        if instruction.id in covered_instruction_ids
+    ]
+    # Construct a new model instead of ``model_copy`` so DAG and instruction
+    # coverage validators run immediately, before checkpoint serialization or
+    # dispatch can observe an internally inconsistent plan.
+    return TaskPlan(instructions=kept_instructions, tasks=kept_tasks)
 
 
 def _documented_prompt_plan(
@@ -892,6 +1056,62 @@ def _documented_prompt_plan(
     return None
 
 
+def _resume_task_identity(task: SubTask) -> str:
+    """Return the complete execution identity eligible for resume reuse.
+
+    Task IDs alone are LLM-generated labels and are not enough to prove an old
+    spatial result applies to a newly planned DAG. The Dispatcher therefore
+    requires exact role, tool, goal, dependencies, expected artifacts and
+    server-bound arguments before it may skip a prior success.
+    """
+    return json.dumps(
+        {
+            "id": task.id,
+            "agent_role": task.agent_role,
+            "tool_name": task.tool_name,
+            "goal": task.goal,
+            "depends_on": list(task.depends_on),
+            "expected_artifacts": list(task.expected_artifacts),
+            "instruction_id": task.instruction_id,
+            "tool_args": dict(task.tool_args or {}),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _reusable_resume_successes(state: AgentRootState, plan: TaskPlan) -> dict[str, list[dict]]:
+    """Return only exact, latest terminal successes from a resume checkpoint."""
+    prior_plan_data = state.get("resume_prior_task_plan")
+    prior_results = state.get("resume_prior_sub_results")
+    if not isinstance(prior_plan_data, dict) or not isinstance(prior_results, dict):
+        return {}
+
+    try:
+        prior_plan = TaskPlan.model_validate(prior_plan_data)
+    except (TypeError, ValueError) as exc:
+        logger.warning("resume prior plan is invalid; no task outcomes reused: %s", exc)
+        return {}
+
+    prior_by_id = {task.id: task for task in prior_plan.tasks}
+    reused: dict[str, list[dict]] = {}
+    for task in plan.tasks:
+        previous = prior_by_id.get(task.id)
+        outcomes = prior_results.get(task.id)
+        if previous is None or not isinstance(outcomes, list) or not outcomes:
+            continue
+        # The final outcome is authoritative. An earlier success followed by
+        # failure/awaiting_input is never reusable.
+        latest = outcomes[-1]
+        if not isinstance(latest, dict) or latest.get("status") not in {"success", "refined"}:
+            continue
+        if _resume_task_identity(previous) != _resume_task_identity(task):
+            continue
+        reused[task.id] = [dict(latest)]
+    return reused
+
+
 def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
     """Call LLM with DISPATCHER_PROMPT, parse JSON into TaskPlan, store in state.
 
@@ -957,6 +1177,14 @@ def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
                     candidate_plan = TaskPlan.model_validate(data["task_plan"])
                     _validate_root_workflow_tools(candidate_plan)
                     _validate_root_plan_semantics(candidate_plan, user_input, upload_file_ids)
+                    candidate_plan = _prune_redundant_count_comparison_coder(
+                        candidate_plan,
+                        state.get("user_input", ""),
+                    )
+                    candidate_plan = _bind_deterministic_task_args(
+                        candidate_plan,
+                        upload_file_ids,
+                    )
                     # Do not leave an invalid candidate in ``plan`` when the
                     # validator raises.  Otherwise a second invalid response
                     # can accidentally bypass fallback and reach dispatch.
@@ -990,6 +1218,10 @@ def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
                     raise ValueError(str(last_error or "planner did not produce a valid workflow DAG"))
                 _validate_root_workflow_tools(fallback_plan)
                 _validate_root_plan_semantics(fallback_plan, user_input, upload_file_ids)
+                fallback_plan = _bind_deterministic_task_args(
+                    fallback_plan,
+                    upload_file_ids,
+                )
                 plan = fallback_plan
                 planner_source = "fallback"
                 logger.warning("root planner failed; using documented fallback: %s", last_error)
@@ -1054,6 +1286,7 @@ def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
                 "run.plan",
                 f"执行计划：{task_count} 个步骤",
                 planner_source=planner_source,
+                upload_file_ids=list(upload_file_ids),
                 instructions=[item.model_dump() for item in plan.instructions],
                 tasks=[
                     {
@@ -1063,6 +1296,7 @@ def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
                         "goal": task.goal,
                         "depends_on": list(task.depends_on),
                         "instruction_id": task.instruction_id,
+                        "tool_args": dict(task.tool_args or {}),
                         "status": "pending",
                     }
                     for task in tasks
@@ -1075,6 +1309,12 @@ def planner_router_node(state: AgentRootState, *, llm=None) -> dict:
 
     result = {"task_plan": plan.model_dump(), "planner_source": planner_source}
     if is_resume_replan:
+        reused = _reusable_resume_successes(state, plan)
+        if reused:
+            result["sub_results"] = reused
+        provenance = dict(state.get("resume_provenance") or {})
+        provenance["reused_task_ids"] = sorted(reused)
+        result["resume_provenance"] = provenance
         # Drop in-memory pending context so judge won't re-pause; Redis
         # PendingStore is still owned by the API resume endpoint.
         result["pending_task"] = None
@@ -1119,7 +1359,7 @@ def _topological_batches(tasks: list[SubTask]) -> list[list[SubTask]]:
 def _task_has_success(results: dict[str, list[dict]], task_id: str) -> bool:
     """True if *task_id* already has a successful outcome in *results*."""
     for outcome in results.get(task_id) or []:
-        if isinstance(outcome, dict) and outcome.get("status") == "success":
+        if isinstance(outcome, dict) and outcome.get("status") in {"success", "refined"}:
             return True
     return False
 
@@ -1316,8 +1556,10 @@ def subagent_state_to_outcome(state: dict, task_id: str, run_id: str) -> SubAgen
         else (last_tr.get("status", "") if isinstance(last_tr, dict) else "")
     ) if last_tr else ""
     final_status = str(final_output.get("status") or "").lower()
-    if last_status in {"error", "empty"} or final_status == "failed":
+    if last_status == "error" or final_status == "failed":
         status = "failed"
+    elif last_status == "empty" or final_status == "empty":
+        status = "empty"
     elif final_output.get("clarification"):
         status = "refined"
     else:
@@ -1456,6 +1698,7 @@ def _extract_artifacts(agent_role: str, final_output: dict, tool_results: list) 
 
     elif agent_role == "poi":
         pois = []
+        saw_poi_result = False
         for r in results:
             data = r.get("data") if isinstance(r, dict) else getattr(r, "data", None)
             if not isinstance(data, dict):
@@ -1463,13 +1706,15 @@ def _extract_artifacts(agent_role: str, final_output: dict, tool_results: list) 
             # code-mode: 结果在 data.result（__result__ dict）中
             inner = data.get("result") if isinstance(data, dict) else None
             if isinstance(inner, dict):
+                saw_poi_result = saw_poi_result or "pois" in inner
                 plist = inner.get("pois") or []
                 pois.extend(plist)
             # 旧 JSON-mode: data 本身有 pois
             if isinstance(data, dict) and not inner:
+                saw_poi_result = saw_poi_result or "pois" in data
                 plist = data.get("pois") or []
                 pois.extend(plist)
-        return with_latest({"pois": pois} if pois else {})
+        return with_latest({"pois": pois} if saw_poi_result else {})
 
     elif agent_role == "geometer":
         for r in reversed(results):
@@ -1494,6 +1739,88 @@ def _extract_artifacts(agent_role: str, final_output: dict, tool_results: list) 
         return {"sandbox_output": results[0]} if results else {}
 
     return with_latest({})
+
+
+def _mapping_value(value: Any) -> dict[str, Any]:
+    """Return a dict from a plain or Pydantic result without serialising data."""
+    if isinstance(value, dict):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        return dumped if isinstance(dumped, dict) else {}
+    return {}
+
+
+def _file_ids_from_value(value: Any) -> list[str]:
+    """Collect explicit file references only; never infer an upload from position."""
+    found: list[str] = []
+
+    def collect(current: Any) -> None:
+        if isinstance(current, dict):
+            for key, child in current.items():
+                if key == "file_id" and isinstance(child, str) and child:
+                    found.append(child)
+                elif key == "file_ids" and isinstance(child, (list, tuple)):
+                    found.extend(item for item in child if isinstance(item, str) and item)
+                else:
+                    collect(child)
+        elif isinstance(current, (list, tuple)):
+            for child in current:
+                collect(child)
+
+    collect(value)
+    return list(dict.fromkeys(found))
+
+
+def _artifact_crs(artifacts: dict[str, Any]) -> str | None:
+    """Read a single declared CRS from a structured tool result, if present."""
+    result = artifacts.get("result")
+    if isinstance(result, dict):
+        crs = result.get("crs") or result.get("_crs_label")
+        if isinstance(crs, str) and crs:
+            return crs
+    pois = artifacts.get("pois") or []
+    declared = {
+        poi.get("crs")
+        for poi in pois
+        if isinstance(poi, dict) and isinstance(poi.get("crs"), str) and poi.get("crs")
+    }
+    return next(iter(declared)) if len(declared) == 1 else None
+
+
+def _attach_artifact_provenance(
+    outcome: SubAgentOutcome,
+    task: SubTask,
+    raw_state: dict[str, Any],
+) -> None:
+    """Attach task-owned identity to a completed artifact for deterministic assembly."""
+    artifacts = outcome.artifacts
+    if not isinstance(artifacts, dict):
+        return
+    result = artifacts.get("result")
+    result_data = result if isinstance(result, dict) else {}
+    tool_params: list[dict[str, Any]] = []
+    for tool_result in raw_state.get("tool_results") or []:
+        tool_result_data = _mapping_value(tool_result)
+        if tool_result_data.get("tool_name") == task.tool_name:
+            tool_params.append(_mapping_value(tool_result_data.get("params")))
+    input_file_ids = _file_ids_from_value([task.tool_args, tool_params])
+    query = result_data.get("query")
+    if not isinstance(query, str) or not query.strip():
+        for params in reversed(tool_params):
+            candidate = params.get("query")
+            if isinstance(candidate, str) and candidate.strip():
+                query = candidate
+                break
+    artifacts["provenance"] = {
+        "task_id": task.id,
+        "tool_name": task.tool_name,
+        "query": query.strip() if isinstance(query, str) and query.strip() else None,
+        "input_file_ids": input_file_ids,
+        "crs": _artifact_crs(artifacts),
+        "upstream_task_ids": list(task.depends_on),
+    }
 
 
 def _enrich_goal_from_deps(task, results: dict[str, list[dict]]) -> str:
@@ -1669,6 +1996,7 @@ async def _dispatch_single(state, task, results, dispatched, events, on_event=No
             llm=get_sub_agent_llm(),
         )
         o = subagent_state_to_outcome(raw_state, task_id=task.id, run_id=rid)
+        _attach_artifact_provenance(o, task, raw_state)
     except Exception as e:
         # sub-agent 整体崩溃（如 planner 解析失败 5 次）—— 记录 failed outcome，不崩溃
         logger.error(
@@ -1748,7 +2076,55 @@ def _is_same_radius_density_followup(user_input: str) -> bool:
     text = str(user_input or "").casefold()
     has_chabaidao = "茶百道" in text or "chabaidao" in text
     density_markers = ("密度", "density", "densidad", "densité")
-    return has_chabaidao and any(marker in text for marker in density_markers)
+    prior_markers = ("上一轮", "刚才", "之前", "previous")
+    comparison_markers = ("比较", "对比", "相比", "compare")
+    count_markers = ("数量", "个数", "count")
+    compares_prior_counts = (
+        any(marker in text for marker in prior_markers)
+        and any(marker in text for marker in comparison_markers)
+        and any(marker in text for marker in count_markers)
+    )
+    return has_chabaidao and (
+        any(marker in text for marker in density_markers)
+        or compares_prior_counts
+    )
+
+
+def _select_current_poi_artifact(
+    poi_artifacts: list[dict[str, Any]],
+    user_input: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Select one current-query POI artifact without ever summing same-role work."""
+    if len(poi_artifacts) == 1:
+        return poi_artifacts[0], None
+    request = str(user_input or "").casefold()
+    matching = [
+        record
+        for record in poi_artifacts
+        if isinstance((record.get("provenance") or {}).get("query"), str)
+        and (record["provenance"]["query"].casefold() in request)
+    ]
+    if len(matching) == 1:
+        return matching[0], None
+    if not matching:
+        return None, "无法从任务溯源中唯一识别当前 POI 查询"
+    return None, "当前请求匹配多个 POI 任务，拒绝合并计数"
+
+
+def _poi_artifacts_named_by_request(
+    poi_artifacts: list[dict[str, Any]],
+    user_input: str,
+) -> list[dict[str, Any]]:
+    """Return task-owned POI products whose executed query occurs in this turn."""
+
+    request = str(user_input or "").casefold()
+    return [
+        record
+        for record in poi_artifacts
+        if isinstance((record.get("provenance") or {}).get("query"), str)
+        and bool(record["provenance"]["query"].strip())
+        and record["provenance"]["query"].casefold() in request
+    ]
 
 
 def assemble_node(state: AgentRootState, *, llm=None) -> dict:
@@ -1822,12 +2198,21 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
     # 1. Collect artifacts and build structured results
     # ------------------------------------------------------------------
     text_parts: list[str] = []
-    map_layers: list[dict] = []
+    map_layer_records: list[dict[str, Any]] = []
     results_for_final: list[dict] = []
     all_pois: list[dict] = []
+    poi_artifacts: list[dict[str, Any]] = []
     geojson_fc: dict | None = None
     failed_tasks: list[tuple[str, str, str]] = []
     successful_task_count = 0
+    empty_task_count = 0
+    comparison_request = _is_same_radius_density_followup(user_input)
+    task_dependencies: dict[str, list[str]] = {}
+    for raw_task in (state.get("task_plan") or {}).get("tasks") or []:
+        if isinstance(raw_task, dict) and isinstance(raw_task.get("id"), str):
+            task_dependencies[raw_task["id"]] = [
+                str(dep) for dep in raw_task.get("depends_on") or []
+            ]
 
     for tid, outcomes in sub_results.items():
         # A task can retain historical attempts.  Assembly must describe its
@@ -1835,10 +2220,13 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
         terminal_outcomes = outcomes[-1:] if outcomes else []
         for o in terminal_outcomes:
             artifacts = o.get("artifacts") or {}
+            provenance = dict(artifacts.get("provenance") or {})
             role = o.get("agent_role", "")
             ostatus = o.get("status", "unknown")
             if ostatus in ("success", "refined"):
                 successful_task_count += 1
+            elif ostatus == "empty":
+                empty_task_count += 1
             elif ostatus == "failed":
                 failed_tasks.append((
                     tid,
@@ -1848,17 +2236,16 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
 
             # --- POI results ---
             pois = artifacts.get("pois") or []
-            if pois:
-                all_pois.extend(pois)
-                results_for_final.append({
-                    "tool_name": "query_poi",
-                    "source": "Amap",
-                    "data": {"pois": pois},
-                    "truncated": False,
+            if role == "poi" and ostatus in {"success", "refined", "empty"} and "pois" in artifacts:
+                poi_artifacts.append({
+                    "task_id": tid,
+                    "pois": pois,
+                    "provenance": provenance,
+                    "result": artifacts.get("result"),
+                    "source": (artifacts.get("result") or {}).get("source", "computed")
+                    if isinstance(artifacts.get("result"), dict)
+                    else "computed",
                 })
-                if ostatus == "success":
-                    names = ", ".join(p.get("name", "?") for p in pois[:5])
-                    text_parts.append(f"找到 {len(pois)} 个 POI: {names}")
 
             # --- Geo results ---
             locations = artifacts.get("locations") or []
@@ -1872,6 +2259,7 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                         "tool_name": "geo_code",
                         "source": loc.get("source", "computed"),
                         "data": dict(loc),
+                        **({"provenance": provenance} if provenance else {}),
                         "truncated": False,
                     })
                 else:
@@ -1887,6 +2275,7 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                     "tool_name": result_tool_name,
                     "source": "computed",
                     "data": generic_result,
+                    **({"provenance": provenance} if provenance else {}),
                     "truncated": False,
                 })
                 if result_tool_name == "geo_transform" and isinstance(generic_result, dict):
@@ -1913,6 +2302,7 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                     "tool_name": result_tool_name,
                     "source": "computed",
                     "data": geojson,
+                    **({"provenance": provenance} if provenance else {}),
                     "truncated": False,
                 })
                 nfeat = len(geojson.get("features", []))
@@ -1923,10 +2313,11 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                     "tool_name": result_tool_name,
                     "source": "computed",
                     "data": generic_result,
+                    **({"provenance": provenance} if provenance else {}),
                     "truncated": False,
                 })
                 if isinstance(generic_result, dict) and generic_result.get("type") == "raster":
-                    map_layers.append(generic_result)
+                    map_layer_records.append({"task_id": tid, "layer": generic_result, "provenance": provenance})
                     value_kind = generic_result.get("value_kind") or result_tool_name
                     text_parts.append(f"栅格分析完成：{value_kind}")
                 elif result_tool_name == "export_result":
@@ -1958,6 +2349,9 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                     else:
                         text_parts.append("几何有效性检查完成")
 
+            if ostatus == "empty" and role != "poi":
+                text_parts.append(f"{artifacts.get('result_tool_name') or role or '工具'} 未返回符合条件的数据")
+
             # --- Viz results ---
             layers = artifacts.get("layers") or []
             if layers:
@@ -1965,11 +2359,12 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                 # assembly cannot discard it and ask the user to upload again.
                 text_parts.append(f"地图图层已生成，共 {len(layers)} 个图层")
             for layer in layers:
-                map_layers.append(layer)
+                map_layer_records.append({"task_id": tid, "layer": layer, "provenance": provenance})
                 results_for_final.append({
                     "tool_name": "map_layer_build",
                     "source": "computed",
                     "data": {"layers": [layer]},
+                    **({"provenance": provenance} if provenance else {}),
                     "truncated": False,
                 })
 
@@ -1996,15 +2391,74 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
                     },
                 })
 
+    # Select POI task products before building any text/map. In particular, a
+    # comparison may contain a redundant/retried same-role branch: counts and
+    # layers must describe the current query task, never a role-wide union.
+    selected_poi_task_id: str | None = None
+    current_poi_count: int | None = None
+    selected_poi_artifacts = list(poi_artifacts)
+    if comparison_request and poi_artifacts:
+        selected, selection_error = _select_current_poi_artifact(poi_artifacts, user_input)
+        if selected is None:
+            failed_tasks.append((
+                "poi_selection",
+                "AMBIGUOUS_POI_ARTIFACT",
+                selection_error or "无法选择当前 POI 产物",
+            ))
+            selected_poi_artifacts = []
+        else:
+            selected_poi_artifacts = [selected]
+            selected_poi_task_id = str(selected["task_id"])
+            current_poi_count = len(selected["pois"])
+    elif len(poi_artifacts) > 1:
+        # Multiple same-role products are not implicitly unioned. Keep only
+        # queries explicitly named by this user turn; if none can be selected,
+        # fail closed instead of publishing a role-wide count/map.
+        matching = _poi_artifacts_named_by_request(poi_artifacts, user_input)
+        if not matching:
+            failed_tasks.append((
+                "poi_selection",
+                "AMBIGUOUS_POI_ARTIFACT",
+                "无法从任务溯源中识别本轮明确请求的 POI 产物",
+            ))
+            selected_poi_artifacts = []
+        else:
+            selected_poi_artifacts = matching
+            if len(matching) == 1:
+                selected_poi_task_id = str(matching[0]["task_id"])
+                current_poi_count = len(matching[0]["pois"])
+    elif len(poi_artifacts) == 1:
+        selected_poi_task_id = str(poi_artifacts[0]["task_id"])
+        current_poi_count = len(poi_artifacts[0]["pois"])
+
+    for poi_artifact in selected_poi_artifacts:
+        pois = poi_artifact["pois"]
+        all_pois.extend(pois)
+        result_payload = poi_artifact.get("result")
+        if not isinstance(result_payload, dict):
+            result_payload = {"pois": pois}
+        results_for_final.append({
+            "tool_name": "query_poi",
+            "source": poi_artifact["source"],
+            "data": dict(result_payload),
+            **({"provenance": poi_artifact["provenance"]} if poi_artifact["provenance"] else {}),
+            "truncated": False,
+        })
+        if pois:
+            names = ", ".join(p.get("name", "?") for p in pois[:5])
+            text_parts.append(f"找到 {len(pois)} 个 POI: {names}")
+        else:
+            text_parts.append("未找到相关 POI")
+
     # A comparison request must answer with both runs' facts, not merely the
-    # newest POI list.  Both documented turns use the same 500 m circular
-    # extent, so their returned POI counts are directly comparable.
-    if all_pois and _is_same_radius_density_followup(user_input):
+    # newest POI list. Both documented turns use the same circular extent, so
+    # their selected task counts are directly comparable.
+    if current_poi_count is not None and comparison_request:
         previous_mixue_count = _previous_poi_count(
             list(state.get("messages") or []), ("蜜雪冰城", "mixue"),
         )
         if previous_mixue_count is not None:
-            current_count = len(all_pois)
+            current_count = current_poi_count
             if current_count > previous_mixue_count:
                 relation = "较高"
             elif current_count < previous_mixue_count:
@@ -2021,7 +2475,46 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
     # 2. Build map if we have POIs or geometry
     # ------------------------------------------------------------------
     map_payload: dict | None = None
+    map_layers = [record["layer"] for record in map_layer_records]
+    all_poi_task_ids = {str(record["task_id"]) for record in poi_artifacts}
+    selected_poi_task_ids = {str(record["task_id"]) for record in selected_poi_artifacts}
+    excluded_poi_task_ids = all_poi_task_ids - selected_poi_task_ids
+    if excluded_poi_task_ids:
+        def upstream_ids(task_id: str, seen: set[str] | None = None) -> set[str]:
+            visited = set() if seen is None else seen
+            if task_id in visited:
+                return set()
+            visited.add(task_id)
+            direct = set(task_dependencies.get(task_id) or [])
+            return direct | set().union(*(upstream_ids(dep, visited) for dep in direct))
+
+        scoped_layers: list[dict] = []
+        for record in map_layer_records:
+            ancestry = upstream_ids(str(record["task_id"]))
+            if ancestry & excluded_poi_task_ids:
+                continue
+            scoped_layers.append(record["layer"])
+        map_layers = scoped_layers
     if map_layers:
+        # Raster analysis artifacts are useful even without an explicit viz
+        # step, but a downstream map_layer_build legitimately wraps the same
+        # artifact again.  Collapse only byte-identical raster layers; vector
+        # layers may intentionally be repeated with different styling/order.
+        deduped_layers: list[dict] = []
+        seen_rasters: set[tuple[Any, ...]] = set()
+        for layer in map_layers:
+            if isinstance(layer, dict) and layer.get("type") == "raster":
+                signature = (
+                    layer.get("png_b64"),
+                    tuple(layer.get("bbox") or []),
+                    layer.get("opacity"),
+                    layer.get("colormap"),
+                )
+                if signature in seen_rasters:
+                    continue
+                seen_rasters.add(signature)
+            deduped_layers.append(layer)
+        map_layers = deduped_layers
         # Viz agent produced explicit layers
         map_payload = {"layers": map_layers}
         explicit_bbox = _bbox_from_layers(map_layers)
@@ -2117,7 +2610,7 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
             for tid, code, message in failed_tasks
         ]
     elif results_for_final or text_parts:
-        final_output["status"] = "success"
+        final_output["status"] = "empty" if empty_task_count else "success"
     # Empty success detection: no structured results and no factual text parts
     elif not results_for_final and not text_parts:
         final_output["status"] = "failed"
@@ -2129,12 +2622,15 @@ def assemble_node(state: AgentRootState, *, llm=None) -> dict:
         on_ev = get_current_handler()
         if on_ev:
             status = final_output.get("status", "ok")
-            if status == "failed":
+            if status in {"failed", "partial"}:
                 from app.agents.events import emit_event
                 emit_event(
                     on_ev,
                     "run.failed",
                     final_output.get("error_code", "任务失败"),
+                    error_code=final_output.get("error_code", "SUBTASK_FAILED"),
+                    terminal_status=status,
+                    failed_tasks=list(final_output.get("failed_tasks") or []),
                     run_id=state.get("run_id", ""),
                     session_id=state.get("session_id", ""),
                 )

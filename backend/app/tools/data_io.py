@@ -463,6 +463,9 @@ class DataIO:
             from shapely.ops import transform
 
             def _fn(x, y, z=None):
+                if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                    wx, wy = gcj02_to_wgs84(float(x), float(y))
+                    return (wx, wy) if z is None else (wx, wy, z)
                 new_coords = []
                 for xi, yi in zip(x, y):
                     if out_of_china(xi, yi):
@@ -553,7 +556,7 @@ class DataIO:
         if not is_gcj02:
             return gdf
 
-        logger.info("KML 导出检测到 GCJ02 数据，自动转回 WGS84")
+        logger.info("标准格式导出检测到 GCJ02 数据，自动转回 WGS84")
 
         from shapely.ops import transform
 
@@ -912,17 +915,28 @@ class DataIO:
             或 {"status": "error", "message": "..."}
         """
         try:
+            source_crs_label: str | None = None
             if isinstance(gdf_or_dict, gpd.GeoDataFrame):
                 gdf = gdf_or_dict
+                source_crs_label = str((gdf.attrs or {}).get("crs_label") or "").strip() or None
+                if source_crs_label is None and gdf.crs is not None:
+                    source_crs_label = gdf.crs.to_string()
             elif isinstance(gdf_or_dict, dict):
+                raw_crs = gdf_or_dict.get("_crs_label") or gdf_or_dict.get("crs")
+                if isinstance(raw_crs, dict):
+                    raw_crs = (raw_crs.get("properties") or {}).get("name")
+                # RFC 7946 GeoJSON without an explicit legacy ``crs`` member is WGS84.
+                source_crs_label = str(raw_crs or "WGS84").strip()
+                normalized_source = source_crs_label.upper()
+                if normalized_source in {"GCJ02", "WGS84", "EPSG:4326"}:
+                    container_crs = "EPSG:4326"
+                else:
+                    container_crs = source_crs_label
                 gdf = gpd.GeoDataFrame.from_features(
-                    gdf_or_dict.get("features", [])
+                    gdf_or_dict.get("features", []),
+                    crs=container_crs,
                 )
-                if gdf_or_dict.get("crs"):
-                    try:
-                        gdf.set_crs(gdf_or_dict["crs"], inplace=True)
-                    except Exception:
-                        pass
+                gdf.attrs["crs_label"] = source_crs_label
             else:
                 return {
                     "status": "error",
@@ -937,16 +951,34 @@ class DataIO:
                     "message": "数据为空，无法导出。",
                 }
 
+            if not source_crs_label or gdf.crs is None:
+                return {
+                    "status": "error",
+                    "message": "输入数据缺少 CRS，无法安全导出。",
+                }
+
+            coordinate_transform = None
+            export_gdf = gdf
+            if source_crs_label.upper() == "GCJ02":
+                # Standard GIS formats have no GCJ02 CRS.  Reverse the offset
+                # instead of labelling GCJ02 coordinate values as EPSG:4326.
+                export_gdf = self._gcj02_to_wgs84_for_export(gdf)
+                coordinate_transform = "GCJ02_TO_WGS84"
+            export_crs = export_gdf.crs.to_string()
+
             # 确保输出目录存在
             parent = Path(path).parent
             parent.mkdir(parents=True, exist_ok=True)
 
-            gdf.to_file(path, driver=driver)
+            export_gdf.to_file(path, driver=driver)
             return {
                 "status": "success",
                 "data": {
                     "path": str(Path(path).resolve()),
-                    "feature_count": len(gdf),
+                    "feature_count": len(export_gdf),
+                    "source_crs": source_crs_label,
+                    "crs": export_crs,
+                    "coordinate_transform": coordinate_transform,
                 },
             }
         except Exception as e:

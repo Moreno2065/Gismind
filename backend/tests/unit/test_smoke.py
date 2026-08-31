@@ -5,8 +5,17 @@ def test_config_loads():
     from app.config import settings
     assert settings.APP_ENV in ("dev", "test")
     assert settings.APP_MAX_ITERATIONS == 10
-    assert settings.LLM_API_KEY  # 非空即可
-    assert settings.AMAP_KEY     # 非空即可
+    # A clean checkout must be importable without copying private secrets.
+    # Runtime startup validation owns the non-empty credential requirement.
+    assert isinstance(settings.LLM_API_KEY, str)
+    assert isinstance(settings.AMAP_KEY, str)
+
+
+def test_validate_config_reports_missing_required_secret(monkeypatch):
+    from app.config import settings, validate_config
+
+    monkeypatch.setattr(settings, "LLM_API_KEY", "")
+    assert "LLM_API_KEY" in validate_config()
 
 
 def test_config_cors_origins_list():

@@ -86,11 +86,24 @@ export function chatStream(req: ChatRequest, signal?: AbortSignal): Promise<Resp
 }
 
 export interface ResumeChatResponse {
-  status: 'resumed' | 'no_checkpoint' | 'mismatch' | 'not_found';
+  status:
+    | 'resumed'
+    | 'no_checkpoint'
+    | 'mismatch'
+    | 'not_found'
+    | 'in_progress'
+    | 'invoke_noop'
+    | 'invoke_failed';
   session_id: string;
   sub_agent_run_id?: string;
   expected_sub_agent_run_id?: string;
   message?: string;
+  resume_provenance?: {
+    source_sub_agent_run_id: string;
+    source_checkpoint_id: string;
+    resume_run_id: string;
+    reused_task_ids?: string[];
+  };
   final_output?: unknown;
 }
 

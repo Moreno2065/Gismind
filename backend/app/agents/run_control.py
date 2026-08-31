@@ -90,10 +90,18 @@ class RunController:
         logger.info("RunController: resume requested for run=%s", self._run_id)
 
     def mark_completed(self) -> None:
-        self._set_state(RunState.COMPLETED)
+        with self._lock:
+            if self._cancel_event.is_set():
+                return
+            self._state = RunState.COMPLETED
+            self._updated_at = time.time()
 
     def mark_failed(self) -> None:
-        self._set_state(RunState.FAILED)
+        with self._lock:
+            if self._cancel_event.is_set():
+                return
+            self._state = RunState.FAILED
+            self._updated_at = time.time()
 
     # -- Polling (called by dispatcher at batch boundaries) --
 
