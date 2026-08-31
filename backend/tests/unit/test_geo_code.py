@@ -72,7 +72,7 @@ class TestGeocode:
 
         assert result["status"] == "empty"
 
-    async def test_geocode_timeout_returns_empty(self, fake_redis):
+    async def test_geocode_all_sources_unavailable_returns_error(self, fake_redis):
         geo = GeoCoder(amap_key="test_key")
         import httpx
         with patch("app.tools.geo_code.httpx.AsyncClient") as mock_client_cls:
@@ -84,8 +84,27 @@ class TestGeocode:
 
             result = await geo.geocode("南京新街口")
 
-        assert result["status"] == "empty"
+        assert result["status"] == "error"
+        assert result["error_code"] == "GEOCODE_SOURCE_UNAVAILABLE"
         assert "暂不可用" in result["message"]
+
+    async def test_geocode_amap_timeout_falls_back_to_nominatim(self, fake_redis):
+        geo = GeoCoder(amap_key="test_key")
+        import httpx
+        nominatim_resp = _mock_response([
+            {"lat": "32.040633", "lon": "118.785349", "display_name": "南京新街口", "type": "place"},
+        ])
+        with patch("app.tools.geo_code.httpx.AsyncClient") as mock_client_cls:
+            client = AsyncMock()
+            client.get.side_effect = [httpx.TimeoutException("amap timeout"), nominatim_resp]
+            client.__aenter__.return_value = client
+            client.__aexit__.return_value = None
+            mock_client_cls.return_value = client
+
+            result = await geo.geocode("南京新街口")
+
+        assert result["status"] == "success"
+        assert result["source"] == "OSM_Nominatim"
 
     async def test_geocode_fallback_nominatim(self, fake_redis):
         """高德返回空時應 fallback 到 OSM Nominatim。"""

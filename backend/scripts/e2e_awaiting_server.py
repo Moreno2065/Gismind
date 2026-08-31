@@ -220,22 +220,34 @@ class ScenarioRootLLM:
                 agent_role="geo",
                 tool_name="geo_transform",
             ))
-        if "E2E_EXPIRED_UPLOAD" in prompt:
+        file_ids = _uploaded_file_ids(prompt)
+        if "E2E_EXPIRED_UPLOAD" in prompt and file_ids:
             return AIMessage(content=_plan(
                 goal="读取一个已失效的上传文件以返回正式错误状态",
                 agent_role="geometer",
                 tool_name="data_io_read",
-                tool_args={"file_id": "file_expired_e2e"},
             ))
-        file_ids = _uploaded_file_ids(prompt)
+        if "E2E_PARTIAL" in prompt and file_ids:
+            return AIMessage(content=_workflow_plan(
+                "读取上传点图层后计算坡度，以验证 partial 终态不会伪装成功",
+                [
+                    {
+                        "id": "t1", "agent_role": "geometer", "tool_name": "data_io_read",
+                        "goal": "读取上传点图层", "depends_on": [],
+                    },
+                    {
+                        "id": "t2", "agent_role": "geometer", "tool_name": "slope",
+                        "goal": "对点图层计算坡度（预期正式失败）", "depends_on": ["t1"],
+                    },
+                ],
+            ))
         if "E2E_UPLOAD_ONE" in prompt and file_ids:
             return AIMessage(content=_workflow_plan(
                 "读取上传 GeoJSON 并建立地图图层",
                 [
                     {
                         "id": "t1", "agent_role": "geometer", "tool_name": "data_io_read",
-                        "goal": f"读取上传文件 {file_ids[0]}", "depends_on": [],
-                        "tool_args": {"file_id": file_ids[0]},
+                        "goal": "读取第一个上传文件", "depends_on": [],
                     },
                     {
                         "id": "t2", "agent_role": "viz", "tool_name": "map_layer_build",
@@ -249,13 +261,11 @@ class ScenarioRootLLM:
                 [
                     {
                         "id": "t1", "agent_role": "geometer", "tool_name": "data_io_read",
-                        "goal": f"读取第一个上传文件 {file_ids[0]}", "depends_on": [],
-                        "tool_args": {"file_id": file_ids[0]},
+                        "goal": "读取第一个上传文件", "depends_on": [],
                     },
                     {
                         "id": "t2", "agent_role": "geometer", "tool_name": "data_io_read",
-                        "goal": f"读取第二个上传文件 {file_ids[1]}", "depends_on": [],
-                        "tool_args": {"file_id": file_ids[1]},
+                        "goal": "读取第二个上传文件", "depends_on": [],
                     },
                     {
                         "id": "t3", "agent_role": "geometer", "tool_name": "overlay",
@@ -264,6 +274,24 @@ class ScenarioRootLLM:
                     {
                         "id": "t4", "agent_role": "viz", "tool_name": "map_layer_build",
                         "goal": "渲染交集结果", "depends_on": ["t3"],
+                    },
+                ],
+            ))
+        if "E2E_UPLOAD_RASTER" in prompt and file_ids:
+            return AIMessage(content=_workflow_plan(
+                "读取上传 GeoTIFF，计算坡度并渲染栅格",
+                [
+                    {
+                        "id": "t1", "agent_role": "geometer", "tool_name": "data_io_read",
+                        "goal": "读取上传栅格", "depends_on": [],
+                    },
+                    {
+                        "id": "t2", "agent_role": "geometer", "tool_name": "slope",
+                        "goal": "计算上传高程栅格的坡度", "depends_on": ["t1"],
+                    },
+                    {
+                        "id": "t3", "agent_role": "viz", "tool_name": "map_layer_build",
+                        "goal": "渲染坡度栅格", "depends_on": ["t2"],
                     },
                 ],
             ))
@@ -297,6 +325,7 @@ class ScenarioSubAgentLLM:
             # Root-owned tool_args overwrite this placeholder with each browser-uploaded id.
             "data_io_read": {"file_id": "file_root_override"},
             "overlay": {"geometry_a_from": 0, "geometry_b_from": 1, "how": "intersection"},
+            "slope": {"dem_from": 0},
             "map_layer_build": {"geometry_from": 0},
         }
         if tool_name not in args_by_tool:
@@ -322,6 +351,9 @@ def main() -> None:
     port = int(os.environ.get("GISMIND_E2E_PORT", "8000"))
 
     settings.REDIS_URL = redis_url
+    # Browser tests exercise real expiration with a bounded wait.  Normal
+    # production runs retain their configured 24-hour value.
+    settings.UPLOAD_TTL_S = int(os.environ.get("GISMIND_E2E_UPLOAD_TTL_S", "5"))
     set_redis_instance(None)
 
     import asyncio

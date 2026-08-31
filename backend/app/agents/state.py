@@ -86,6 +86,15 @@ class AgentRootState(TypedDict, total=False):
     # Resume re-dispatch skips task_ids already present with success status.
     sub_results: dict[str, list]
 
+    # Immutable state captured from the exact checkpoint that produced an
+    # awaiting-input prompt. planner_router may reuse only structurally
+    # identical successful tasks from this snapshot.
+    resume_prior_task_plan: dict
+    resume_prior_sub_results: dict[str, list]
+
+    # Correlates a resumed run with its source sub-agent and checkpoint.
+    resume_provenance: dict[str, object]
+
     # Note: on_event handler is now passed via contextvar (events/current.py)
     # instead of through LangGraph state — callables cannot be serialised
     # by SqliteSaver and would cause checkpoint failures.
@@ -126,4 +135,7 @@ def new_root_state(
         "pending_task": None,
         "resume_patch": {},
         "sub_results": {},
+        "resume_prior_task_plan": {},
+        "resume_prior_sub_results": {},
+        "resume_provenance": {},
     }

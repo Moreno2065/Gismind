@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from typing import Any, Optional
 
 from app.agents.schemas import PendingTask
@@ -34,6 +35,10 @@ class PendingStore:
     """
 
     _TTL = 86400  # 24 小时
+    # A resume can legitimately run several external GIS operations.  Keep the
+    # lease long enough for that bounded run, but never indefinitely after a
+    # process crash.
+    _CLAIM_TTL = 900  # 15 minutes
 
     def __init__(self, redis_client: Any = None) -> None:
         """``redis_client`` 可选；不传则通过 ``get_redis()`` 取 async 客户端。"""
@@ -49,6 +54,10 @@ class PendingStore:
         from app.utils.redis import make_key
         return make_key("pending", session_id)
 
+    def _claim_key(self, session_id: str) -> str:
+        from app.utils.redis import make_key
+        return make_key("pending-claim", session_id)
+
     async def save(self, session_id: str, pt: PendingTask) -> None:
         """将 PendingTask 写入 Redis；TTL 24h。"""
         r = self._get_redis()
@@ -57,6 +66,10 @@ class PendingStore:
             json.dumps(pt.to_dict(), ensure_ascii=False),
             ex=self._TTL,
         )
+        # A freshly persisted follow-up question supersedes any lease for the
+        # prior question.  The active resumer owns that transition; a later
+        # request must claim the new pending row again.
+        await r.delete(self._claim_key(session_id))
 
     async def load(self, session_id: str) -> Optional[PendingTask]:
         """从 Redis 读取 PendingTask；不存在 / 损坏时返回 None。"""
@@ -73,7 +86,62 @@ class PendingStore:
     async def clear(self, session_id: str) -> None:
         """从 Redis 删除 PendingTask（不存在的 key 静默忽略）。"""
         r = self._get_redis()
-        await r.delete(self._key(session_id))
+        await r.delete(self._key(session_id), self._claim_key(session_id))
+
+    async def claim(self, session_id: str, sub_agent_run_id: str) -> Optional[str]:
+        """Atomically lease one pending task for a single ``/resume`` caller.
+
+        The pending payload remains readable while the lease exists; only the
+        successful caller may later clear or replace it.  ``None`` means
+        another resume already owns the same session's pending transition.
+        ``sub_agent_run_id`` is stored for diagnostics only: the endpoint has
+        already checked it against the authoritative pending payload.
+        """
+        r = self._get_redis()
+        token = secrets.token_urlsafe(24)
+        value = json.dumps(
+            {"token": token, "sub_agent_run_id": str(sub_agent_run_id)},
+            ensure_ascii=False,
+        )
+        claimed = await r.set(
+            self._claim_key(session_id),
+            value,
+            nx=True,
+            ex=self._CLAIM_TTL,
+        )
+        return token if claimed else None
+
+    async def release_claim(self, session_id: str, token: str) -> bool:
+        """Release only the caller's own lease, never a newer caller's lease."""
+        r = self._get_redis()
+        key = self._claim_key(session_id)
+        # The stored JSON additionally contains the run id, so compare the
+        # decoded token atomically in Lua.  This prevents a timed-out caller
+        # from deleting a replacement lease obtained after its TTL expired.
+        script = (
+            "local raw = redis.call('GET', KEYS[1]); "
+            "if not raw then return 0 end; "
+            "local ok, value = pcall(cjson.decode, raw); "
+            "if ok and value['token'] == ARGV[1] then "
+            "return redis.call('DEL', KEYS[1]); end; return 0"
+        )
+        try:
+            deleted = await r.eval(script, 1, key, token)
+            return bool(deleted)
+        except Exception:
+            # Compatibility fallback for constrained Redis providers.  The
+            # normal local Redis route uses the atomic Lua branch above.
+            raw = await r.get(key)
+            if not raw:
+                return False
+            try:
+                value = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return False
+            if value.get("token") != token:
+                return False
+            await r.delete(key)
+            return True
 
     # ------------------------------------------------------------------
     # Sync wrappers — never call run_coroutine_threadsafe on the *current*

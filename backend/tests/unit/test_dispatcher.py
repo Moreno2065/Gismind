@@ -181,6 +181,7 @@ def test_subagent_state_to_outcome_with_results_preserves_success():
     outcome = subagent_state_to_outcome(state, "t1", "r1")
     assert outcome.status == "success"
     assert outcome.error_code is None
+    assert outcome.artifacts["pois"] == []
 
 
 def test_subagent_state_to_outcome_empty_tool_result_is_failed():
@@ -215,6 +216,99 @@ def test_subagent_state_to_outcome_empty_tool_result_is_failed():
 
     assert outcome.status == "failed"
     assert outcome.error_message == "无法解析输入几何"
+
+
+def test_subagent_state_to_outcome_preserves_legitimate_empty_poi_artifact():
+    """An empty query result is terminal data, while remaining unusable as a dependency."""
+    from app.agents.dispatcher import subagent_state_to_outcome
+
+    payload = {
+        "pois": [], "query": "不存在的品牌", "center": [118.7845, 32.0429],
+        "radius_m": 500, "radius_tolerance_m": 5, "crs": "GCJ02",
+    }
+    state = {
+        "agent_role": "poi",
+        "final_output": {
+            "status": "empty",
+            "summary": "未找到相关 POI",
+            "results": [{"tool_name": "query_poi", "source": "Amap", "data": payload}],
+        },
+        "tool_results": [{
+            "tool_name": "query_poi", "status": "empty", "source": "Amap",
+            "data": payload, "message": "未找到相关 POI",
+        }],
+        "iteration": 1,
+    }
+
+    outcome = subagent_state_to_outcome(state, "poi_step", "r-empty")
+
+    assert outcome.status == "empty"
+    assert outcome.error_code is None
+    assert outcome.artifacts["pois"] == []
+    assert outcome.artifacts["result"] == payload
+
+
+def test_assemble_legitimate_empty_poi_converges_without_map_or_failure():
+    """Zero POIs should produce a factual empty terminal, not EMPTY_RUN/run.failed."""
+    from app.agents.dispatcher import assemble_node
+
+    payload = {
+        "pois": [], "query": "不存在的品牌", "center": [118.7845, 32.0429],
+        "radius_m": 500, "radius_tolerance_m": 5, "crs": "GCJ02",
+    }
+    final_output = assemble_node({
+        "user_input": "查询不存在的品牌",
+        "dispatcher_events": [],
+        "sub_results": {
+            "poi_step": [{
+                "agent_role": "poi", "status": "empty",
+                "artifacts": {
+                    "pois": [], "result": payload, "result_tool_name": "query_poi",
+                    "provenance": {
+                        "task_id": "poi_step", "tool_name": "query_poi",
+                        "query": "不存在的品牌", "input_file_ids": [],
+                        "crs": "GCJ02", "upstream_task_ids": [],
+                    },
+                },
+            }],
+        },
+    })["final_output"]
+
+    assert final_output["status"] == "empty"
+    assert final_output["summary"] == "未找到相关 POI"
+    assert final_output["results"][0]["data"] == payload
+    assert "map" not in final_output
+
+
+def test_assemble_keeps_a_refined_poi_result_as_the_terminal_task_product():
+    """Verifier refinement is still a successful task-owned artifact."""
+    from app.agents.dispatcher import assemble_node
+
+    pois = [{"name": "茶百道", "location": [118.7845, 32.0429], "crs": "GCJ02"}]
+    payload = {
+        "pois": pois, "query": "茶百道", "center": [118.7845, 32.0429],
+        "radius_m": 500, "radius_tolerance_m": 5, "crs": "GCJ02",
+    }
+    final_output = assemble_node({
+        "user_input": "查询茶百道",
+        "dispatcher_events": [],
+        "sub_results": {
+            "tea": [{
+                "agent_role": "poi", "status": "refined",
+                "artifacts": {
+                    "pois": pois, "result": payload, "result_tool_name": "query_poi",
+                    "provenance": {
+                        "task_id": "tea", "tool_name": "query_poi", "query": "茶百道",
+                        "input_file_ids": [], "crs": "GCJ02", "upstream_task_ids": [],
+                    },
+                },
+            }],
+        },
+    })["final_output"]
+
+    assert final_output["status"] == "success"
+    assert final_output["results"][0]["data"] == payload
+    assert len(final_output["map"]["layers"][0]["features"]) == 1
 
 
 def test_geometer_step_preserves_generic_result_for_next_dag_step():
@@ -543,8 +637,8 @@ def test_documented_gps_to_amap_request_routes_to_geo_transform():
     assert "GCJ02" in plan.tasks[0].goal
 
 
-def test_documented_attribute_equality_routes_to_structured_attribute_filter():
-    """A class equality request must use the registered structured filter tool."""
+def test_attribute_equality_is_not_captured_by_strong_guardrail():
+    """A normal uploaded-data filter must remain Root-Planner work."""
     from app.agents.dispatcher import _strong_constraint_guardrail_plan
 
     plan = _strong_constraint_guardrail_plan(
@@ -552,15 +646,11 @@ def test_documented_attribute_equality_routes_to_structured_attribute_filter():
         ["file_points"],
     )
 
-    assert plan is not None
-    assert [task.tool_name for task in plan.tasks] == ["data_io_read", "extract_by_attribute"]
-    filter_task = plan.tasks[-1]
-    assert filter_task.depends_on == ["t0"]
-    assert filter_task.tool_args == {"field": "class", "operator": "==", "value": "station"}
+    assert plan is None
 
 
-def test_documented_elevation_reclass_routes_to_slope_then_exact_bins():
-    """The common elevation synonym has a closed three-step raster contract."""
+def test_elevation_reclass_is_not_captured_by_strong_guardrail():
+    """A normal raster workflow must remain Root-Planner work."""
     from app.agents.dispatcher import _strong_constraint_guardrail_plan
 
     plan = _strong_constraint_guardrail_plan(
@@ -568,11 +658,7 @@ def test_documented_elevation_reclass_routes_to_slope_then_exact_bins():
         ["file_dem"],
     )
 
-    assert plan is not None
-    assert [task.tool_name for task in plan.tasks] == ["data_io_read", "slope", "reclassify_raster"]
-    assert plan.tasks[1].depends_on == ["t0"]
-    assert plan.tasks[2].depends_on == ["t1"]
-    assert plan.tasks[2].tool_args == {"bins": [15, 30], "values": [1, 2, 3]}
+    assert plan is None
 
 
 def test_assemble_compares_multiturn_poi_density_from_persisted_result():
@@ -607,6 +693,270 @@ def test_assemble_compares_multiturn_poi_density_from_persisted_result():
     assert "茶百道检索到 5 个" in summary
     assert "蜜雪冰城检索到 8 个" in summary
     assert "较低" in summary
+
+
+def test_assemble_compares_valid_zero_poi_result_instead_of_empty_run():
+    """A successful zero-result POI lookup must remain answerable downstream."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from app.agents.dispatcher import assemble_node
+
+    result = assemble_node({
+        "user_input": "沿用刚才的位置，改查茶百道并和上一轮数量比较。",
+        "messages": [
+            HumanMessage(content="南京新街口500米内蜜雪冰城"),
+            AIMessage(content="找到 8 个 POI: 蜜雪冰城 A"),
+        ],
+        "dispatcher_events": [],
+        "sub_results": {
+            "t1": [{
+                "agent_role": "poi",
+                "status": "success",
+                "artifacts": {
+                    "pois": [],
+                    "result": {
+                        "pois": [],
+                        "provider_status": {"Amap": "empty", "OSM": "unavailable"},
+                    },
+                    "result_tool_name": "query_poi",
+                },
+                "iteration_used": 1,
+            }],
+        },
+    })
+
+    summary = result["final_output"]["summary"]
+    assert result["final_output"]["status"] == "success"
+    assert "未找到相关 POI" in summary
+    assert "茶百道检索到 0 个" in summary
+    assert "蜜雪冰城检索到 8 个" in summary
+    assert "较低" in summary
+
+
+def test_dispatch_records_task_scoped_artifact_provenance():
+    """Every dispatched artifact keeps its producer/task/input identity for safe assembly."""
+    import asyncio
+    from unittest.mock import patch
+
+    from app.agents.dispatcher import _dispatch_single
+    from app.agents.schemas import SubTask
+
+    raw_state = {
+        "agent_role": "poi",
+        "iteration": 1,
+        "tool_results": [{"tool_name": "query_poi", "status": "success"}],
+        "final_output": {
+            "results": [{
+                "tool_name": "query_poi",
+                "status": "success",
+                "data": {
+                    "pois": [{"name": "茶百道", "location": [118.7845, 32.0429], "crs": "GCJ02"}],
+                    "query": "茶百道",
+                    "center": [118.7845, 32.0429],
+                    "radius_m": 500,
+                    "crs": "GCJ02",
+                },
+            }],
+        },
+    }
+    task = SubTask(
+        id="chabaidao", agent_role="poi", tool_name="query_poi",
+        goal="查询茶百道", depends_on=["locate"], tool_args={"file_id": "file_area"},
+    )
+    results: dict[str, list[dict]] = {}
+
+    with patch("app.agents.build_sub_agent.run_sub_agent", return_value=raw_state):
+        asyncio.run(_dispatch_single(
+            {"task_plan": {"tasks": [task.model_dump()]}, "upload_file_ids": ["file_area"]},
+            task,
+            results,
+            {},
+            [],
+        ))
+
+    provenance = results["chabaidao"][0]["artifacts"]["provenance"]
+    assert provenance == {
+        "task_id": "chabaidao",
+        "tool_name": "query_poi",
+        "query": "茶百道",
+        "input_file_ids": ["file_area"],
+        "crs": "GCJ02",
+        "upstream_task_ids": ["locate"],
+    }
+
+
+def test_assemble_comparison_selects_only_the_current_query_artifact_for_count_and_map():
+    """An accidental same-role POI branch must not turn 20 + 2 into the current count 22."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from app.agents.dispatcher import assemble_node
+
+    def poi_artifact(task_id: str, query: str, count: int) -> dict:
+        pois = [
+            {
+                "name": f"{query} {index}",
+                "location": [118.7845 + index / 100_000, 32.0429],
+                "crs": "GCJ02",
+            }
+            for index in range(count)
+        ]
+        return {
+            "pois": pois,
+            "result": {"pois": pois, "query": query, "center": [118.7845, 32.0429], "radius_m": 500, "crs": "GCJ02"},
+            "result_tool_name": "query_poi",
+            "provenance": {
+                "task_id": task_id, "tool_name": "query_poi", "query": query,
+                "input_file_ids": [], "crs": "GCJ02", "upstream_task_ids": ["locate"],
+            },
+        }
+
+    result = assemble_node({
+        "user_input": "沿用刚才的位置，改查茶百道并和上一轮数量比较。",
+        "messages": [
+            HumanMessage(content="南京新街口五百米内蜜雪冰城"),
+            AIMessage(content="找到 20 个 POI: 蜜雪冰城 A"),
+        ],
+        "dispatcher_events": [],
+        "task_plan": {"tasks": [
+            {"id": "mixue_retry", "agent_role": "poi", "tool_name": "query_poi", "goal": "查询蜜雪冰城", "depends_on": ["locate"]},
+            {"id": "chabaidao", "agent_role": "poi", "tool_name": "query_poi", "goal": "查询茶百道", "depends_on": ["locate"]},
+        ]},
+        "sub_results": {
+            "mixue_retry": [{"agent_role": "poi", "status": "success", "artifacts": poi_artifact("mixue_retry", "蜜雪冰城", 20)}],
+            "chabaidao": [{"agent_role": "poi", "status": "success", "artifacts": poi_artifact("chabaidao", "茶百道", 2)}],
+        },
+    })["final_output"]
+
+    assert "茶百道检索到 2 个" in result["summary"]
+    assert "茶百道检索到 22 个" not in result["summary"]
+    poi_results = [item for item in result["results"] if item["tool_name"] == "query_poi"]
+    assert [len(item["data"]["pois"]) for item in poi_results] == [2]
+    assert len(result["map"]["layers"][0]["features"]) == 2
+
+
+def test_assemble_scopes_non_comparison_poi_results_and_layers_to_the_query_named_by_the_user():
+    """A stale same-role branch must not leak into an ordinary POI answer or map."""
+    from app.agents.dispatcher import assemble_node
+
+    def poi_artifact(task_id: str, query: str, count: int) -> dict:
+        pois = [
+            {
+                "name": f"{query} {index}",
+                "location": [118.7845 + index / 100_000, 32.0429],
+                "crs": "GCJ02",
+            }
+            for index in range(count)
+        ]
+        return {
+            "pois": pois,
+            "result": {"pois": pois, "query": query, "center": [118.7845, 32.0429], "radius_m": 500, "crs": "GCJ02"},
+            "result_tool_name": "query_poi",
+            "provenance": {
+                "task_id": task_id, "tool_name": "query_poi", "query": query,
+                "input_file_ids": [], "crs": "GCJ02", "upstream_task_ids": ["locate"],
+            },
+        }
+
+    def layer(query: str, count: int) -> dict:
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [118.7845 + index / 100_000, 32.0429]},
+                    "properties": {"name": f"{query} {index}"},
+                }
+                for index in range(count)
+            ],
+        }
+
+    result = assemble_node({
+        "user_input": "查询南京新街口五百米内的茶百道并显示",
+        "messages": [],
+        "dispatcher_events": [],
+        "task_plan": {"tasks": [
+            {"id": "mixue_retry", "agent_role": "poi", "tool_name": "query_poi", "goal": "错误复查蜜雪冰城", "depends_on": ["locate"]},
+            {"id": "tea", "agent_role": "poi", "tool_name": "query_poi", "goal": "查询茶百道", "depends_on": ["locate"]},
+            {"id": "mixue_map", "agent_role": "viz", "tool_name": "map_layer_build", "goal": "错误蜜雪冰城图层", "depends_on": ["mixue_retry"]},
+            {"id": "tea_map", "agent_role": "viz", "tool_name": "map_layer_build", "goal": "茶百道图层", "depends_on": ["tea"]},
+        ]},
+        "sub_results": {
+            "mixue_retry": [{"agent_role": "poi", "status": "success", "artifacts": poi_artifact("mixue_retry", "蜜雪冰城", 20)}],
+            "tea": [{"agent_role": "poi", "status": "success", "artifacts": poi_artifact("tea", "茶百道", 2)}],
+            "mixue_map": [{"agent_role": "viz", "status": "success", "artifacts": {"layers": [layer("蜜雪冰城", 20)]}}],
+            "tea_map": [{"agent_role": "viz", "status": "success", "artifacts": {"layers": [layer("茶百道", 2)]}}],
+        },
+    })["final_output"]
+
+    poi_results = [item for item in result["results"] if item["tool_name"] == "query_poi"]
+    assert [len(item["data"]["pois"]) for item in poi_results] == [2]
+    assert "找到 20 个 POI" not in result["summary"]
+    assert len(result["map"]["layers"]) == 1
+    assert len(result["map"]["layers"][0]["features"]) == 2
+
+
+def test_assemble_preserves_task_provenance_on_every_structured_result():
+    """Public final results must retain the identity used to prevent cross-task mixing."""
+    from app.agents.dispatcher import assemble_node
+
+    provenance = {
+        "task_id": "export",
+        "tool_name": "export_result",
+        "query": None,
+        "input_file_ids": ["file_source"],
+        "crs": "WGS84",
+        "upstream_task_ids": ["buffer"],
+    }
+    final_output = assemble_node({
+        "user_input": "导出结果",
+        "dispatcher_events": [],
+        "sub_results": {
+            "export": [{
+                "agent_role": "geometer",
+                "status": "success",
+                "artifacts": {
+                    "result_tool_name": "export_result",
+                    "result": {"path": "workspace/result.geojson", "feature_count": 2},
+                    "provenance": provenance,
+                },
+            }],
+        },
+    })["final_output"]
+
+    assert final_output["results"][0]["provenance"] == provenance
+
+
+def test_assemble_deduplicates_raster_result_repeated_by_viz_task():
+    """A computed raster and its viz wrapper must produce one frontend layer."""
+    from app.agents.dispatcher import assemble_node
+
+    raster = {
+        "type": "raster",
+        "png_b64": "iVBORw0KGgo=",
+        "bbox": [118.79, 32.03, 118.82, 32.06],
+        "width": 3,
+        "height": 3,
+        "value_kind": "slope",
+    }
+    result = assemble_node({
+        "user_input": "计算上传高程栅格的坡度并显示",
+        "messages": [],
+        "dispatcher_events": [],
+        "sub_results": {
+            "t2": [{
+                "agent_role": "geometer",
+                "status": "success",
+                "artifacts": {"result": raster, "result_tool_name": "slope"},
+            }],
+            "t3": [{
+                "agent_role": "viz",
+                "status": "success",
+                "artifacts": {"layers": [raster]},
+            }],
+        },
+    })
+
+    assert len(result["final_output"]["map"]["layers"]) == 1
 
 
 def test_assemble_reports_completed_map_layer_without_a_fallback_reply():
@@ -711,6 +1061,43 @@ def test_assemble_marks_partial_when_a_required_subtask_failed():
     assert final_output["status"] == "partial"
     assert "缓冲区未生成" in final_output["summary"]
     assert "全部完成" not in final_output["summary"]
+
+
+def test_assemble_emits_run_failed_not_completed_for_partial_terminal_state():
+    """A semantic/downstream failure must never publish a successful run event."""
+    from app.agents.dispatcher import assemble_node
+    from app.agents.events.current import reset_current_handler, set_current_handler
+
+    events: list[dict] = []
+    token = set_current_handler(events.append)
+    try:
+        result = assemble_node({
+            "user_input": "查地铁站并创建缓冲区",
+            "session_id": "terminal-partial",
+            "run_id": "run-terminal-partial",
+            "dispatcher_events": [],
+            "sub_results": {
+                "poi": [{
+                    "agent_role": "poi",
+                    "status": "success",
+                    "artifacts": {"pois": [{"name": "新街口站", "location": [118.784, 32.041]}]},
+                }],
+                "buffer": [{
+                    "agent_role": "geometer",
+                    "status": "failed",
+                    "artifacts": {},
+                    "error_code": "SEMANTIC_POSTCONDITION_FAILED",
+                    "error_message": "BUFFER_AREA_MISMATCH",
+                }],
+            },
+        })
+    finally:
+        reset_current_handler(token)
+
+    assert result["final_output"]["status"] == "partial"
+    assert [event["event"] for event in events] == ["run.failed"]
+    assert events[0]["terminal_status"] == "partial"
+    assert events[0]["error_code"] == "SUBTASK_PARTIAL_FAILURE"
 
 
 def test_assemble_marks_failed_when_all_terminal_subtasks_failed():

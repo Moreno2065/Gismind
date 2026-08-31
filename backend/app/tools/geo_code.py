@@ -113,7 +113,7 @@ class GeoCoder:
 
         Returns:
             {
-              "status": "success" | "empty",
+              "status": "success" | "empty" | "error",
               "location": [lng, lat],        # 主坐标，向后兼容
               "formatted_address": str,
               "source": "Amap" | "Redis",
@@ -162,7 +162,17 @@ class GeoCoder:
                 resp.raise_for_status()
                 body = resp.json()
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError):
-            return {"status": "empty", "message": "地理编码服务暂不可用"}
+            fallback = await self._fallback_nominatim(address)
+            if fallback.get("status") == "success":
+                await r.set(
+                    key,
+                    json.dumps(fallback, ensure_ascii=False),
+                    ex=settings.CACHE_TTL_GEOCODE,
+                )
+                return fallback
+            if fallback.get("status") == "empty":
+                return {"status": "empty", "message": f"未找到 {address} 的坐标"}
+            return fallback
 
         if body.get("status") != "1":
             # 区分服务端错误（key 无效/限频） vs 其他异常
@@ -175,16 +185,18 @@ class GeoCoder:
                 }
             # 其他服务端返回非成功状态 → OSM Nominatim 兜底
             fallback = await self._fallback_nominatim(address)
-            if fallback:
+            if fallback.get("status") == "success":
                 await r.set(key, json.dumps(fallback, ensure_ascii=False),
                             ex=settings.CACHE_TTL_GEOCODE)
+                return fallback
+            if fallback.get("status") == "error":
                 return fallback
             return {"status": "empty", "message": f"未找到 {address} 的坐标"}
 
         if not body.get("geocodes"):
             # 空结果（高德无匹配）→ OSM Nominatim 兜底
             fallback = await self._fallback_nominatim(address)
-            if fallback:
+            if fallback.get("status") == "success":
                 await r.set(key, json.dumps(fallback, ensure_ascii=False),
                             ex=settings.CACHE_TTL_GEOCODE)
                 return fallback
@@ -218,10 +230,10 @@ class GeoCoder:
                     ex=settings.CACHE_TTL_GEOCODE)
         return result
 
-    async def _fallback_nominatim(self, address: str) -> dict | None:
+    async def _fallback_nominatim(self, address: str) -> dict:
         """OSM Nominatim 兜底地理编码。
 
-        當高德返回空時調用。返回與 geocode() 同 schema 的 dict，或 None（也失敗時）。
+        當高德返回空或不可用時調用。合法零結果与服务故障必须分开返回。
         Nominatim 返回 WGS84，國內結果轉 GCJ02（與高德底圖一致）。
         """
         try:
@@ -234,10 +246,14 @@ class GeoCoder:
                 resp.raise_for_status()
                 results = resp.json()
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError):
-            return None
+            return {
+                "status": "error",
+                "error_code": "GEOCODE_SOURCE_UNAVAILABLE",
+                "message": "地理编码服务暂不可用",
+            }
 
         if not results or not isinstance(results, list):
-            return None
+            return {"status": "empty", "message": f"未找到 {address} 的坐标"}
 
         # 解析原始結果，WGS84 → GCJ02
         parsed = []
@@ -257,7 +273,7 @@ class GeoCoder:
             })
 
         if not parsed:
-            return None
+            return {"status": "empty", "message": f"未找到 {address} 的坐标"}
 
         principal = parsed[0]["gcj02"]
         candidates = [

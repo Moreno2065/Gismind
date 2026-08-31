@@ -283,7 +283,10 @@ export function ChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
             ...m,
             status: 'error',
             error: {
-              code: 'RUN_FAILED',
+              // The following terminal `error` event normally repeats this
+              // code. Preserve it here as well so a stream interruption after
+              // `run.failed` cannot erase the actionable backend category.
+              code: String(raw.error_code || 'RUN_FAILED'),
               message: String(raw.message || '任务执行失败'),
             },
           }));
@@ -434,6 +437,17 @@ export function ChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
             setAwaitingInput((prev) => prev ? {
               ...prev,
               error: result.message ?? '等待任务已失效，请重新提交或换一种描述。',
+            } : prev);
+            return;
+          case 'in_progress':
+          case 'invoke_noop':
+          case 'invoke_failed':
+            // These terminal HTTP responses have not consumed the pending
+            // task. Never fall through into a fresh /api/chat request: that
+            // would duplicate spatial work or lose the user's clarification.
+            setAwaitingInput((prev) => prev ? {
+              ...prev,
+              error: result.message ?? '恢复尚未完成，请保留当前回答后重试。',
             } : prev);
             return;
         }

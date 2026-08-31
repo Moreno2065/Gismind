@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
+    "test:e2e:local": "powershell -ExecutionPolicy Bypass -File scripts/run-e2e-local.ps1",
     "test:e2e:awaiting": "playwright test e2e/awaiting-input.spec.ts"
   },
   "dependencies": {

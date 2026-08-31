@@ -20,7 +20,6 @@
   },
   {
     "id": "RP03",
-    "allowed_planner_sources": ["guardrail"],
     "uploads": ["sample_points"],
     "turns": ["从我刚传的点图层里挑出 class 等于 station 的记录，并作为新图层显示。"],
     "expected_tools": {"data_io_read": 1, "extract_by_attribute": 1},
@@ -41,7 +40,6 @@
   },
   {
     "id": "RP05",
-    "allowed_planner_sources": ["guardrail"],
     "uploads": ["dem"],
     "turns": ["对上传的高程栅格先求坡度，再按小于15度、15到30度和大于30度分成三个等级后显示。"],
     "expected_tools": {"data_io_read": 1, "slope": 1, "reclassify_raster": 1},

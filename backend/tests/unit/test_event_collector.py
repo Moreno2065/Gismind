@@ -184,6 +184,33 @@ class TestEventCollector:
                        stage="preflight", code="test", tool_name="tool")
         assert collector._queue.qsize() == 2
 
+    def test_queue_is_bounded_and_preserves_latest_events(self):
+        """A stalled SSE client cannot grow the process queue without bound."""
+        collector, _loop = _make_collector(max_queue_size=3)
+
+        for index in range(5):
+            collector.emit("code.execution.stdout", f"line {index}")
+
+        assert collector._queue.qsize() == 3
+        assert collector.dropped_count == 2
+        assert [collector._queue.get_nowait()["message"] for _ in range(3)] == [
+            "line 2", "line 3", "line 4",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_stop_unblocks_a_full_bounded_queue(self):
+        """The stop sentinel must survive backpressure and terminate consume()."""
+        collector = EventCollector(max_queue_size=2)
+        collector.emit("code.execution.stdout", "line 1")
+        collector.emit("code.execution.stdout", "line 2")
+        collector.stop()
+
+        received = []
+        async for event in collector.consume():
+            received.append(event["message"])
+
+        assert received == ["line 2"]
+
     def test_event_has_required_fields(self):
         """All events from EVENT_CONTRACTS have event, event_type, display_kind, message, timestamp."""
         collector, _loop = _make_collector()

@@ -49,6 +49,21 @@ _collectors: dict[str, EventCollector] = {}
 _COLLECTOR_TTL_S = 600  # 10 minutes; prevents memory leaks
 
 
+def _register_collector(session_id: str, collector: EventCollector) -> None:
+    """Publish the newest run collector for the deprecated GET event stream."""
+    _collectors[session_id] = collector
+
+
+def _unregister_collector(session_id: str, collector: EventCollector) -> None:
+    """Remove *collector* only if it is still the session's current run.
+
+    Two POST streams may briefly overlap for one session during stop/switch.
+    The older stream's ``finally`` must never delete the newer registration.
+    """
+    if _collectors.get(session_id) is collector:
+        _collectors.pop(session_id, None)
+
+
 async def _wait_for_collector(
     session_id: str,
     poll_interval: float = 0.1,
@@ -377,7 +392,7 @@ async def chat(req: ChatRequest, request: Request):
     # Create EventCollector for SSE streaming (before run starts, so GET /events
     # can find it immediately).
     collector = EventCollector()
-    _collectors[req.session_id] = collector
+    _register_collector(req.session_id, collector)
     logger.debug("chat: collector created for session=%s", req.session_id)
 
     async def event_stream():
@@ -484,15 +499,39 @@ async def chat(req: ChatRequest, request: Request):
             # Real-time event bridge: poll collector.get() while run is ongoing,
             # forwarding events as SSE frames immediately. Uses the timeout-enabled
             # get() method instead of consume() to avoid cancelling async generators.
-            _HEARTBEAT = 15
+            _HEARTBEAT = 15.0
+            _CANCEL_POLL = 0.25
+            last_heartbeat = asyncio.get_running_loop().time()
             while not loop_task.done():
-                item = await collector.get(timeout=_HEARTBEAT)
+                item = await collector.get(timeout=_CANCEL_POLL)
+                if run_ctrl.should_stop():
+                    collector.stop()
+                    loop_task.cancel()  # the worker thread may finish, but its result is detached
+                    yield sse_format("error", {
+                        "code": "CANCELLED",
+                        "message": "请求已取消",
+                        "trace_id": trace_id,
+                        "run_id": run_id,
+                    })
+                    return
                 if item is None:
-                    yield ": heartbeat\n\n"
+                    now = asyncio.get_running_loop().time()
+                    if now - last_heartbeat >= _HEARTBEAT:
+                        yield ": heartbeat\n\n"
+                        last_heartbeat = now
                 else:
                     remember_event(item)
                     yield sse_format(item.get("event", "message"), item)
 
+            if run_ctrl.should_stop():
+                collector.stop()
+                yield sse_format("error", {
+                    "code": "CANCELLED",
+                    "message": "请求已取消",
+                    "trace_id": trace_id,
+                    "run_id": run_id,
+                })
+                return
             result = loop_task.result()
 
             # Drain any remaining events that arrived after the run completed
@@ -500,9 +539,27 @@ async def chat(req: ChatRequest, request: Request):
                 item = await collector.get(timeout=0.2)
                 if item is None:
                     break
+                if run_ctrl.should_stop():
+                    collector.stop()
+                    yield sse_format("error", {
+                        "code": "CANCELLED",
+                        "message": "请求已取消",
+                        "trace_id": trace_id,
+                        "run_id": run_id,
+                    })
+                    return
                 remember_event(item)
                 yield sse_format(item.get("event", "message"), item)
             collector.stop()
+
+            if run_ctrl.should_stop():
+                yield sse_format("error", {
+                    "code": "CANCELLED",
+                    "message": "请求已取消",
+                    "trace_id": trace_id,
+                    "run_id": run_id,
+                })
+                return
 
             # Build react_trace for persistence only (NOT yielded to POST stream --
             # real-time events already cover the trace). The merged trace is still
@@ -513,7 +570,7 @@ async def chat(req: ChatRequest, request: Request):
 
             final_output = dict(result.get("final_output") or {})
             final_output["execution_trace"] = execution_trace
-            if final_output.get("status") == "failed" or result.get("status") == "failed":
+            if final_output.get("status") in {"failed", "partial"} or result.get("status") == "failed":
                 message = (
                     final_output.get("summary")
                     or final_output.get("text")
@@ -528,6 +585,8 @@ async def chat(req: ChatRequest, request: Request):
                 yield sse_format("error", {
                     "code": final_output.get("error_code", "INTERNAL_ERROR"),
                     "message": message,
+                    "terminal_status": final_output.get("status", "failed"),
+                    "failed_tasks": final_output.get("failed_tasks") or [],
                     "trace_id": trace_id,
                     "run_id": run_id,
                 })
@@ -542,6 +601,14 @@ async def chat(req: ChatRequest, request: Request):
             if not isinstance(map_payload, dict):
                 map_payload = _build_map_from_results(final_output.get("results") or [])
             if isinstance(map_payload, dict) and map_payload.get("layers"):
+                if run_ctrl.should_stop():
+                    yield sse_format("error", {
+                        "code": "CANCELLED",
+                        "message": "请求已取消",
+                        "trace_id": trace_id,
+                        "run_id": run_id,
+                    })
+                    return
                 yield sse_format("map", map_payload)
             # token 事件:增量流式发送 final_output.text 或 .summary
             text = final_output.get("text") or final_output.get("summary") or ""
@@ -549,6 +616,14 @@ async def chat(req: ChatRequest, request: Request):
                 # 按句子/段落增量推送,模拟打字机效果
                 _CHUNK_SIZE = 20  # 每次推送 20 字符
                 for i in range(0, len(text), _CHUNK_SIZE):
+                    if run_ctrl.should_stop():
+                        yield sse_format("error", {
+                            "code": "CANCELLED",
+                            "message": "请求已取消",
+                            "trace_id": trace_id,
+                            "run_id": run_id,
+                        })
+                        return
                     yield sse_format("token", {"content": text[i:i + _CHUNK_SIZE]})
 
             # --- AWAITING_INPUT: emit judge.awaiting_input event ---
@@ -564,6 +639,14 @@ async def chat(req: ChatRequest, request: Request):
                         pending_task = data["pending_task"]
                         break
             if pending_task:
+                if run_ctrl.should_stop():
+                    yield sse_format("error", {
+                        "code": "CANCELLED",
+                        "message": "请求已取消",
+                        "trace_id": trace_id,
+                        "run_id": run_id,
+                    })
+                    return
                 yield sse_format("judge.awaiting_input", {
                     "event": "judge.awaiting_input",
                     "pending_task": pending_task,
@@ -575,19 +658,34 @@ async def chat(req: ChatRequest, request: Request):
 
             # 持久化本轮对话到 Redis session store(供 session list 统计 tool_count / message_count / title)
             # 必须在 done 事件之前完成，否则前端刷新时 save_turn 尚未执行（竞态条件）
+            if run_ctrl.should_stop():
+                yield sse_format("error", {
+                    "code": "CANCELLED",
+                    "message": "请求已取消",
+                    "trace_id": trace_id,
+                    "run_id": run_id,
+                })
+                return
             try:
                 from app.utils.session import save_turn
                 await save_turn(req.session_id, req.message, final_output)
             except Exception:
                 logger.exception("save_turn failed trace=%s", trace_id)
 
+            if run_ctrl.should_stop():
+                yield sse_format("error", {
+                    "code": "CANCELLED",
+                    "message": "请求已取消",
+                    "trace_id": trace_id,
+                    "run_id": run_id,
+                })
+                return
             yield sse_format("done", {"trace_id": trace_id, "run_id": run_id})
             run_ctrl.mark_completed()
         except asyncio.CancelledError:
             logger.info("chat stream cancelled by client trace=%s", trace_id)
             run_ctrl.request_cancel()
             collector.stop()
-            run_ctrl.mark_failed()
             yield sse_format("error", {
                 "code": "CANCELLED",
                 "message": "请求已取消",
@@ -613,7 +711,7 @@ async def chat(req: ChatRequest, request: Request):
         finally:
             # Clean up collector after stream ends (or client disconnects).
             if not collector.queue_has_consumer():
-                _collectors.pop(req.session_id, None)
+                _unregister_collector(req.session_id, collector)
                 logger.debug("chat: collector cleaned up for session=%s", req.session_id)
 
     return StreamingResponse(
@@ -659,7 +757,7 @@ async def chat_events(session_id: str, request: Request):
             collector.mark_no_consumer()
             # If the run has already finished and nobody else is consuming, clean up.
             if not collector.queue_has_consumer():
-                _collectors.pop(session_id, None)
+                _unregister_collector(session_id, collector)
                 logger.debug("chat_events: collector cleaned up for session=%s", session_id)
 
     return StreamingResponse(
@@ -832,6 +930,7 @@ async def resume_chat(session_id: str, request: Request):
         - ``{"status": "mismatch", ...}`` ———— sub_agent_run_id 不匹配
         - ``{"status": "no_checkpoint", ...}`` ———— 无 checkpoint，pending 保留
         - ``{"status": "invalid_answer", ...}`` ———— patch 解析失败，pending 保留
+        - ``{"status": "in_progress", ...}`` ———— 同一 pending 正由另一个 resume 处理
         - ``{"status": "invoke_noop", ...}`` ———— invoke 成功但未 replan，pending 保留
         - ``{"status": "invoke_failed", ...}`` ———— invoke 异常，pending 保留
     """
@@ -894,6 +993,47 @@ async def resume_chat(session_id: str, request: Request):
             "message": err,
         }
 
+    # Capture the exact state that produced the awaiting prompt.  It is passed
+    # to planner_router as immutable prior context; only an exact task identity
+    # may be reused during the subsequent replan.
+    try:
+        snapshot = dispatcher_app.get_state(config)
+    except Exception:
+        logger.warning("resume source checkpoint snapshot unavailable", exc_info=True)
+        snapshot = None
+    snapshot_values = getattr(snapshot, "values", None)
+    if snapshot_values is None and isinstance(snapshot, dict):
+        snapshot_values = snapshot.get("values")
+    if not isinstance(snapshot_values, dict):
+        snapshot_values = {}
+    snapshot_config = getattr(snapshot, "config", None)
+    if snapshot_config is None and isinstance(snapshot, dict):
+        snapshot_config = snapshot.get("config")
+    configurable = (
+        snapshot_config.get("configurable", {})
+        if isinstance(snapshot_config, dict)
+        else {}
+    )
+    source_checkpoint_id = str(configurable.get("checkpoint_id") or "")
+
+    # The Redis lease is the concurrency boundary. It is deliberately taken
+    # after all pure validation, so malformed requests never block the valid
+    # answer and two browser retries cannot invoke the same DAG twice.
+    claim_token = await store.claim(session_id, pt.sub_agent_run_id)
+    if not claim_token:
+        return {
+            "status": "in_progress",
+            "session_id": session_id,
+            "sub_agent_run_id": pt.sub_agent_run_id,
+            "message": "该待回答任务正在恢复，请等待当前请求完成",
+        }
+
+    async def _release_claim() -> None:
+        try:
+            await store.release_claim(session_id, claim_token)
+        except Exception:
+            logger.exception("resume claim release failed session=%s", session_id)
+
     pending_dict = pt.to_dict()
     # Fresh run_id so a cancelled SSE chat stream cannot cancel this resume via
     # the old RunController (same session_id, different controller key).
@@ -907,9 +1047,20 @@ async def resume_chat(session_id: str, request: Request):
         "resume_patch": resume_patch or {},
         "session_id": session_id,
         "run_id": resume_run_id,
-        # Drop historical sub outcomes so stale awaiting rows cannot re-arm pause
-        # after replan renames task ids or succeeds without a new pause.
+        # The active state starts clean, while planner_router receives an
+        # immutable prior snapshot and may restore only exact successes.
         "sub_results": {},
+        "resume_prior_task_plan": dict(snapshot_values.get("task_plan") or {}),
+        "resume_prior_sub_results": dict(snapshot_values.get("sub_results") or {}),
+        "resume_provenance": {
+            "source_sub_agent_run_id": pt.sub_agent_run_id,
+            "source_checkpoint_id": source_checkpoint_id,
+            # SqliteSaver checkpoint_id is the immutable checkpoint version.
+            # Keep the explicit alias in public provenance so callers do not
+            # have to infer version semantics from an implementation name.
+            "source_checkpoint_version": source_checkpoint_id,
+            "resume_run_id": resume_run_id,
+        },
         "final_output": {},
         "should_stop": False,
         "termination_cause": "",
@@ -947,6 +1098,7 @@ async def resume_chat(session_id: str, request: Request):
             final_state = await asyncio.to_thread(_invoke_resume_fallback)
         except Exception:
             logger.exception("resume invoke failed session=%s", session_id)
+            await _release_claim()
             return {
                 "status": "invoke_failed",
                 "session_id": session_id,
@@ -956,6 +1108,7 @@ async def resume_chat(session_id: str, request: Request):
             }
 
     if not _resume_replan_consumed(final_state, pending_dict):
+        await _release_claim()
         return {
             "status": "invoke_noop",
             "session_id": session_id,
@@ -994,11 +1147,18 @@ async def resume_chat(session_id: str, request: Request):
     else:
         await store.clear(session_id)
 
+    await _release_claim()
+
     return {
         "status": "resumed",
         "session_id": session_id,
         "sub_agent_run_id": pt.sub_agent_run_id,
         "answer": user_answer,
+        "resume_provenance": (
+            (final_state or {}).get("resume_provenance", resume_values["resume_provenance"])
+            if isinstance(final_state, dict)
+            else resume_values["resume_provenance"]
+        ),
         "final_output": (final_state or {}).get("final_output") if isinstance(final_state, dict) else None,
     }
 

@@ -22,6 +22,7 @@ import pytest
 from shapely.geometry import Point
 
 from app.tools.data_io import DataIO
+from app.tools.geo_transform import gcj02_to_wgs84
 
 
 # ============================================================
@@ -337,6 +338,41 @@ class TestExportResult:
             result = DataIO().export_result(geojson_dict, out_path)
             assert result["status"] == "success"
             assert os.path.exists(out_path)
+            assert result["data"]["crs"] == "EPSG:4326"
+            assert gpd.read_file(out_path).crs.to_epsg() == 4326
+
+    def test_export_gcj02_dict_to_geojson_converts_coordinates_to_wgs84(self):
+        """标准导出不能把 GCJ02 数值伪装成 WGS84 GeoJSON。"""
+        gcj02 = (118.785349, 32.040633)
+        source = {
+            "type": "FeatureCollection",
+            "_crs_label": "GCJ02",
+            "features": [{
+                "type": "Feature",
+                "properties": {"name": "新街口"},
+                "geometry": {"type": "Point", "coordinates": list(gcj02)},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = os.path.join(tmpdir, "gcj02.geojson")
+            result = DataIO().export_result(source, out_path, driver="GeoJSON")
+
+            assert result["status"] == "success"
+            assert result["data"]["source_crs"] == "GCJ02"
+            assert result["data"]["crs"] == "EPSG:4326"
+            assert result["data"]["coordinate_transform"] == "GCJ02_TO_WGS84"
+            coordinates = json.loads(Path(out_path).read_text(encoding="utf-8"))["features"][0]["geometry"]["coordinates"]
+            expected = gcj02_to_wgs84(*gcj02)
+            assert coordinates == pytest.approx(expected, abs=1e-6)
+
+    def test_export_geodataframe_without_crs_fails_closed(self):
+        """未知 CRS 不能静默写出一个看似成功但不可定位的空间文件。"""
+        gdf = gpd.GeoDataFrame({"name": ["unknown"]}, geometry=[Point(118.78, 32.04)])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = DataIO().export_result(gdf, os.path.join(tmpdir, "unknown.geojson"), driver="GeoJSON")
+
+            assert result["status"] == "error"
+            assert "CRS" in result["message"]
 
     def test_export_empty_data(self):
         """空数据返回 error。"""

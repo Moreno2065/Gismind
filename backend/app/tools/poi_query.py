@@ -6,8 +6,8 @@
 1. **双源策略**：高德为主（全量、结构化、GCJ02），OSM 补漏（开源、无配额、WGS84）
 2. **Fallback 封装在 Tool 内部**：不让 LLM 决定"高德查不到再查 OSM"，
    避免额外 React Loop 轮次
-3. **TimeoutError / ConnectionError 降级为 Empty Result**：对 LLM 来说，
-   "查不到"和"查超时"都是没数据，Tool 内部 catch 后统一返回 status="empty"
+3. **空结果与源故障分离**：至少一个数据源给出合法空响应时返回零结果；
+   所有数据源均不可用时返回 status="error"，避免把服务故障伪装成"查不到"
 4. **3 秒硬超时**：OSM Overpass 响应慢，超时直接返回
 5. **国内数据统一 GCJ02**：OSM 的 WGS84 用 geo_transform.wgs84_to_gcj02 转换
 6. **国外数据保持 WGS84**：高德海外底图自动切换为无偏移 WGS84
@@ -36,6 +36,9 @@ _OSM_ENDPOINT = "https://overpass-api.de/api/interpreter"
 
 # 去重默认阈值（米）：小于此距离视为同一 POI
 _DEDUP_DEFAULT_THRESHOLD_M = 50
+# Provider radius/bounding-box filters are not authoritative.  Keep a small
+# coordinate-rounding allowance, but always apply an exact spherical check.
+_RADIUS_TOLERANCE_M = 5.0
 
 
 class POIQuery:
@@ -115,8 +118,9 @@ class POIQuery:
 
         # 高德 status="1" 表示成功
         if data.get("status") != "1":
-            logger.warning("amap query failed: %s", data.get("info", "unknown"))
-            return []
+            info = data.get("info", "unknown")
+            logger.warning("amap query failed: %s", info)
+            raise requests.HTTPError(f"Amap API error: {info}")
 
         pois_raw = data.get("pois") or []
         results: list[dict] = []
@@ -272,20 +276,30 @@ class POIQuery:
                 关闭后可保留所有原始记录，但跨源仍去重。
 
         Returns:
-            dict: status=success 时含 data.pois 和 source；
-                  status=empty 时 data 为空，对 LLM 来说"查不到"和"查超时"无差别
+            dict: status=success 时含 data.pois 和 source；所有数据源均不可用时
+                  status=error，并携带 POI_SOURCE_UNAVAILABLE。
         """
         threshold = self.dedup_threshold_m if dedup_threshold_m is None else dedup_threshold_m
         within = self.within_source_dedup if within_source_dedup is None else within_source_dedup
+        provider_status = {"Amap": "unavailable", "OSM": "not_attempted"}
 
         # 1. 优先高德
         try:
             amap_results = self.query_amap(query, location, radius)
+            amap_results = self._filter_to_radius(amap_results, location, radius)
+            provider_status["Amap"] = "success" if amap_results else "empty"
             if within and amap_results:
                 amap_results = self._dedup_within(amap_results, threshold)
             if amap_results:
-                return self._format_results(amap_results, source="Amap")
-        except (requests.Timeout, requests.ConnectionError) as e:
+                return self._format_results(
+                    amap_results,
+                    source="Amap",
+                    query=query,
+                    center=location,
+                    radius_m=radius,
+                    provider_status=provider_status,
+                )
+        except requests.RequestException as e:
             # 高德超时/断连 -> 对 LLM 来说就是"没数据"，继续走 OSM 兜底
             logger.info("amap fallback to osm: %s", e)
         except Exception as e:  # noqa: BLE001
@@ -296,18 +310,49 @@ class POIQuery:
         bbox = self._radius_to_bbox(location, radius)
         try:
             osm_results = self.query_osm(query, bbox)
-        except (requests.Timeout, requests.ConnectionError) as e:
+            provider_status["OSM"] = "success" if osm_results else "empty"
+        except (requests.RequestException, ValueError) as e:
             logger.info("osm also failed: %s", e)
-            return {"status": "empty", "data": None, "source": None,
-                    "message": "POI 数据源暂时不可用"}
+            provider_status["OSM"] = "unavailable"
+            if provider_status["Amap"] == "empty":
+                return {
+                    "status": "success",
+                    "data": self._poi_data([], query, location, radius, provider_status),
+                    "source": "Amap",
+                    "message": "未找到相关 POI",
+                }
+            return {
+                "status": "error",
+                "error_code": "POI_SOURCE_UNAVAILABLE",
+                "data": self._poi_data([], query, location, radius, provider_status),
+                "source": None,
+                "message": "POI 数据源暂时不可用",
+            }
         except Exception as e:  # noqa: BLE001
             logger.warning("osm unexpected error: %s", e)
-            return {"status": "empty", "data": None, "source": None,
-                    "message": "POI 查询失败"}
+            provider_status["OSM"] = "unavailable"
+            if provider_status["Amap"] == "empty":
+                return {
+                    "status": "success",
+                    "data": self._poi_data([], query, location, radius, provider_status),
+                    "source": "Amap",
+                    "message": "未找到相关 POI",
+                }
+            return {
+                "status": "error",
+                "error_code": "POI_SOURCE_UNAVAILABLE",
+                "data": self._poi_data([], query, location, radius, provider_status),
+                "source": None,
+                "message": "POI 查询失败",
+            }
 
         if not osm_results:
-            return {"status": "empty", "data": None, "source": None,
-                    "message": "未找到相关 POI"}
+            return {
+                "status": "success",
+                "data": self._poi_data([], query, location, radius, provider_status),
+                "source": "Amap+OSM",
+                "message": "未找到相关 POI",
+            }
 
         # 3. 根据国内/国外决定坐标系
         if self._is_china_bbox(bbox):
@@ -318,17 +363,33 @@ class POIQuery:
                 p["location"] = (gcj_lng, gcj_lat)
                 p["crs"] = "GCJ02"
                 p["source"] = "OSM_CN"
+            osm_results = self._filter_to_radius(osm_results, location, radius)
             if within:
                 osm_results = self._dedup_within(osm_results, threshold)
-            return self._format_results(osm_results, source="OSM_CN")
+            return self._format_results(
+                osm_results,
+                source="OSM_CN",
+                query=query,
+                center=location,
+                radius_m=radius,
+                provider_status=provider_status,
+            )
         else:
             # 国外：保持 WGS84
             for p in osm_results:
                 p["source"] = "OSM_Global"
                 p["crs"] = "WGS84"
+            osm_results = self._filter_to_radius(osm_results, location, radius)
             if within:
                 osm_results = self._dedup_within(osm_results, threshold)
-            return self._format_results(osm_results, source="OSM_Global")
+            return self._format_results(
+                osm_results,
+                source="OSM_Global",
+                query=query,
+                center=location,
+                radius_m=radius,
+                provider_status=provider_status,
+            )
 
     # ------------------------------------------------------------------
     # 去重
@@ -485,12 +546,76 @@ class POIQuery:
         dlng = radius * meter_to_deg_lng
         return (lng - dlng, lat - dlat, lng + dlng, lat + dlat)
 
-    def _format_results(self, results: list, source: str) -> dict:
-        """格式化返回结果。"""
+    def _filter_to_radius(
+        self,
+        results: list[dict],
+        center: tuple,
+        radius_m: float,
+    ) -> list[dict]:
+        """Recompute and enforce the circular search boundary for every provider record."""
+        maximum_distance = float(radius_m) + _RADIUS_TOLERANCE_M
+        filtered: list[dict] = []
+        for poi in results:
+            location = poi.get("location") if isinstance(poi, dict) else None
+            if not isinstance(location, (list, tuple)) or len(location) < 2:
+                logger.warning("discarding POI without a valid location: %r", poi)
+                continue
+            try:
+                normalized_location = (float(location[0]), float(location[1]))
+                distance_m = haversine_m(center, normalized_location)
+            except (TypeError, ValueError):
+                logger.warning("discarding POI with non-numeric location: %r", poi)
+                continue
+            if distance_m > maximum_distance:
+                logger.info(
+                    "discarding out-of-radius POI name=%r distance_m=%.3f radius_m=%.3f",
+                    poi.get("name"), distance_m, radius_m,
+                )
+                continue
+            normalized = dict(poi)
+            normalized["location"] = normalized_location
+            # Provider distance can be absent or wrong; downstream facts must
+            # use this recomputed value for filtering, counts and rendering.
+            normalized["distance"] = distance_m
+            filtered.append(normalized)
+        return filtered
+
+    def _poi_data(
+        self,
+        pois: list[dict],
+        query: str,
+        center: tuple,
+        radius_m: float,
+        provider_status: dict[str, str] | None = None,
+    ) -> dict:
+        """Return the query contract that Dispatcher and postconditions consume."""
+        center_pair = [float(center[0]), float(center[1])]
+        crs = "GCJ02" if self._is_china_bbox(self._radius_to_bbox(center, int(radius_m))) else "WGS84"
+        return {
+            "pois": pois,
+            "query": str(query),
+            "center": center_pair,
+            "radius_m": float(radius_m),
+            "radius_tolerance_m": _RADIUS_TOLERANCE_M,
+            "crs": crs,
+            **({"provider_status": provider_status} if provider_status is not None else {}),
+        }
+
+    def _format_results(
+        self,
+        results: list[dict],
+        source: str,
+        *,
+        query: str,
+        center: tuple,
+        radius_m: float,
+        provider_status: dict[str, str] | None = None,
+    ) -> dict:
+        """Format a semantically validated POI result for the agent boundary."""
         return {
             "status": "success",
             "source": source,
-            "data": {"pois": results},
+            "data": self._poi_data(results, query, center, radius_m, provider_status),
         }
 
     def _is_china_bbox(self, bbox: tuple) -> bool:

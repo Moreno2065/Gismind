@@ -3,7 +3,7 @@
 覆盖维度（参考 docs/04_testing_strategy.md §2.4 / §3.2 + GIS_Agent_技术文档.md §4.3）：
 1. 高德成功：mock requests.get 返回 amap_poi_sample，验证结果正确（GCJ02、source="Amap"）
 2. 高德空触发 OSM 兜底（国内）：source="OSM_CN"，WGS84 坐标转 GCJ02
-3. 双源都空：status="empty"
+3. 双源都空：status="success"，pois=[]（有效零结果不是执行失败）
 4. 高德超时触发 OSM：mock 高德抛 Timeout，OSM 正常
 5. OSM 也超时：返回 empty
 6. 国外区域：location 在旧金山，OSM 数据保持 WGS84，source="OSM_Global"
@@ -95,6 +95,66 @@ def test_amap_success(mock_get, amap_poi_sample):
     assert p0["location"][1] == pytest.approx(32.0429, abs=1e-6)
 
 
+@patch("app.tools.poi_query.requests.get")
+def test_amap_results_are_filtered_by_computed_spherical_radius(mock_get):
+    """Provider-reported distance is advisory; only a recomputed radius may reach callers."""
+    center = (118.7845, 32.0429)
+    mock_get.side_effect = _make_get_dispatcher(amap_resp={
+        "status": "1",
+        "count": "2",
+        "pois": [
+            {
+                "id": "near", "name": "半径内", "location": "118.7845,32.0429",
+                "address": "中心", "distance": "1",
+            },
+            {
+                # About 2 km east of the center despite the provider's false 1 m.
+                "id": "far", "name": "半径外", "location": "118.8060,32.0429",
+                "address": "远处", "distance": "1",
+            },
+        ],
+    })
+
+    result = POIQuery(amap_key="test_key").search_poi_tool(
+        query="咖啡馆", location=center, radius=500,
+    )
+
+    pois = result["data"]["pois"]
+    assert [poi["name"] for poi in pois] == ["半径内"]
+    assert pois[0]["distance"] == pytest.approx(haversine_m(center, pois[0]["location"]), abs=0.01)
+    assert all(poi["distance"] <= 505 for poi in pois)
+    assert result["data"]["query"] == "咖啡馆"
+    assert result["data"]["center"] == list(center)
+    assert result["data"]["radius_m"] == 500
+
+
+@patch("app.tools.poi_query.requests.get")
+def test_osm_results_without_distance_are_filtered_after_crs_normalization(mock_get):
+    """OSM's bounding box is only a prefilter; its returned points need exact distance checks."""
+    center = (118.7845, 32.0429)
+    near_wgs = gcj02_to_wgs84(*center)
+    far_wgs = gcj02_to_wgs84(118.8060, 32.0429)
+    mock_get.side_effect = _make_get_dispatcher(
+        amap_resp={"status": "1", "count": "0", "pois": []},
+        osm_resp={
+            "elements": [
+                {"type": "node", "id": 1, "lat": near_wgs[1], "lon": near_wgs[0], "tags": {"name": "半径内"}},
+                {"type": "node", "id": 2, "lat": far_wgs[1], "lon": far_wgs[0], "tags": {"name": "半径外"}},
+            ],
+        },
+    )
+
+    result = POIQuery(amap_key="test_key").search_poi_tool(
+        query="咖啡馆", location=center, radius=500,
+    )
+
+    pois = result["data"]["pois"]
+    assert result["source"] == "OSM_CN"
+    assert [poi["name"] for poi in pois] == ["半径内"]
+    assert pois[0]["distance"] == pytest.approx(haversine_m(center, pois[0]["location"]), abs=0.01)
+    assert all(poi["distance"] <= 505 for poi in pois)
+
+
 # ============================================================
 # 2. 高德空触发 OSM 兜底（国内）
 # ============================================================
@@ -134,8 +194,8 @@ def test_amap_empty_triggers_osm_cn(mock_get, osm_poi_sample):
 # ============================================================
 
 @patch("app.tools.poi_query.requests.get")
-def test_both_empty_returns_empty(mock_get):
-    """高德空 + OSM 空 -> status=empty，不抛异常。"""
+def test_both_empty_returns_successful_zero_count(mock_get):
+    """高德空 + OSM 空是可回答的零结果，而不是工具执行失败。"""
     mock_get.side_effect = _make_get_dispatcher(
         amap_resp={"status": "1", "count": "0", "pois": []},
         osm_resp={"elements": []},
@@ -148,8 +208,62 @@ def test_both_empty_returns_empty(mock_get):
         radius=500,
     )
 
-    assert result["status"] == "empty"
-    assert result["data"] is None or result["data"] == {}
+    assert result["status"] == "success"
+    assert result["data"]["pois"] == []
+    assert result["data"]["provider_status"] == {
+        "Amap": "empty",
+        "OSM": "empty",
+    }
+    assert result["message"] == "未找到相关 POI"
+
+
+@patch("app.tools.poi_query.requests.get")
+def test_amap_valid_empty_survives_osm_http_error(mock_get):
+    """A valid Amap zero result remains authoritative when fallback is unavailable."""
+    mock_get.side_effect = _make_get_dispatcher(
+        amap_resp={"status": "1", "count": "0", "pois": []},
+        osm_exc=requests.HTTPError("overpass 429"),
+    )
+
+    query = POIQuery(amap_key="test_key")
+    result = query.search_poi_tool(
+        query="茶百道",
+        location=(118.785349, 32.040633),
+        radius=500,
+    )
+
+    assert result["status"] == "success"
+    assert result["source"] == "Amap"
+    assert result["data"]["pois"] == []
+    assert result["data"]["provider_status"] == {
+        "Amap": "empty",
+        "OSM": "unavailable",
+    }
+    assert result["message"] == "未找到相关 POI"
+
+
+@patch("app.tools.poi_query.requests.get")
+def test_amap_api_error_and_osm_error_remains_unavailable(mock_get):
+    """Provider errors must not be mislabeled as an authoritative zero count."""
+    mock_get.side_effect = _make_get_dispatcher(
+        amap_resp={"status": "0", "info": "INVALID_USER_KEY", "pois": []},
+        osm_exc=requests.HTTPError("overpass 429"),
+    )
+
+    query = POIQuery(amap_key="bad_key")
+    result = query.search_poi_tool(
+        query="茶百道",
+        location=(118.785349, 32.040633),
+        radius=500,
+    )
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "POI_SOURCE_UNAVAILABLE"
+    assert result["data"]["provider_status"] == {
+        "Amap": "unavailable",
+        "OSM": "unavailable",
+    }
+    assert result["message"] == "POI 数据源暂时不可用"
 
 
 # ============================================================
@@ -176,12 +290,12 @@ def test_amap_timeout_triggers_osm(mock_get, osm_poi_sample):
 
 
 # ============================================================
-# 5. OSM 也超时
+# 5. 高德合法空时，OSM 超时不覆盖零结果
 # ============================================================
 
 @patch("app.tools.poi_query.requests.get")
-def test_osm_timeout_returns_empty(mock_get):
-    """高德空 + OSM 超时 -> empty。"""
+def test_osm_timeout_preserves_valid_amap_zero_result(mock_get):
+    """高德合法空 + OSM 超时仍是成功零结果，并保留降级证据。"""
     mock_get.side_effect = _make_get_dispatcher(
         amap_resp={"status": "1", "count": "0", "pois": []},
         osm_exc=requests.Timeout("osm timeout"),
@@ -194,7 +308,12 @@ def test_osm_timeout_returns_empty(mock_get):
         radius=500,
     )
 
-    assert result["status"] == "empty"
+    assert result["status"] == "success"
+    assert result["data"]["pois"] == []
+    assert result["data"]["provider_status"] == {
+        "Amap": "empty",
+        "OSM": "unavailable",
+    }
 
 
 @patch("app.tools.poi_query.requests.get")
@@ -426,15 +545,25 @@ def test_is_china_bbox_delegates():
 # ============================================================
 
 def test_format_results_structure():
-    """_format_results 返回 status=success + data.pois + source。"""
+    """_format_results retains the complete query contract with its POIs."""
     query = POIQuery(amap_key="test")
     pois = [
         {"name": "A", "location": (118.78, 32.04), "source": "Amap", "crs": "GCJ02"},
     ]
-    result = query._format_results(pois, source="Amap")
+    result = query._format_results(
+        pois,
+        source="Amap",
+        query="咖啡馆",
+        center=(118.78, 32.04),
+        radius_m=500,
+    )
     assert result["status"] == "success"
     assert result["source"] == "Amap"
     assert result["data"]["pois"] == pois
+    assert result["data"]["query"] == "咖啡馆"
+    assert result["data"]["center"] == [118.78, 32.04]
+    assert result["data"]["radius_m"] == 500
+    assert result["data"]["crs"] == "GCJ02"
 
 
 # ============================================================

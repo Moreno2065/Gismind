@@ -1210,19 +1210,36 @@ class RasterAnalyzer:
         try:
             arr, profile = self._read_single_band(src_path)
             result = np.full_like(arr, np.nan, dtype=np.float32)
+            # Raster files commonly encode nodata as a finite sentinel (for
+            # example -9999).  Never let that sentinel satisfy a normal class
+            # interval or value-replacement rule merely because it is finite.
+            valid_mask = np.isfinite(arr)
+            source_nodata = profile.get("nodata")
+            if source_nodata is not None:
+                try:
+                    valid_mask &= ~np.isclose(arr, float(source_nodata), rtol=0.0, atol=0.0)
+                except (TypeError, ValueError):
+                    pass
 
             if len(values) == len(bins) + 1:
                 # 区间重分类
-                result[arr < bins[0]] = values[0]
+                # Derived rasters (notably slope) accumulate float32 noise at
+                # authored class breaks: 15° may arrive as 14.99999.  Snap a
+                # sub-millimetric numeric tolerance to the exact boundary so
+                # the documented half-open interval contract remains stable.
+                classified = arr.astype(np.float64, copy=True)
+                for boundary in bins:
+                    classified[np.isclose(classified, boundary, rtol=0.0, atol=1e-4)] = boundary
+                result[valid_mask & (classified < bins[0])] = values[0]
                 for i in range(len(bins) - 1):
-                    mask = (arr >= bins[i]) & (arr < bins[i + 1])
+                    mask = valid_mask & (classified >= bins[i]) & (classified < bins[i + 1])
                     result[mask] = values[i + 1]
-                result[arr >= bins[-1]] = values[-1]
+                result[valid_mask & (classified >= bins[-1])] = values[-1]
             elif len(values) == len(bins):
                 # 逐值替换
-                result = arr.astype(np.float32).copy()
+                result[valid_mask] = arr[valid_mask].astype(np.float32)
                 for src_val, dst_val in zip(bins, values):
-                    result[arr == src_val] = dst_val
+                    result[valid_mask & (arr == src_val)] = dst_val
             else:
                 return {
                     "status": "error",
@@ -1233,13 +1250,26 @@ class RasterAnalyzer:
                     ),
                 }
 
+            # Preserve the declared raster nodata representation on disk.  The
+            # in-memory ``result`` stays NaN-based for reliable statistics,
+            # while the written file uses its profile sentinel so external
+            # readers expose a proper mask rather than an unmasked NaN.
+            output_pixels = result
+            if source_nodata is not None:
+                try:
+                    nodata_value = float(source_nodata)
+                    if np.isfinite(nodata_value):
+                        output_pixels = result.copy()
+                        output_pixels[~np.isfinite(output_pixels)] = nodata_value
+                except (TypeError, ValueError):
+                    pass
             if dst_path is None:
-                dst_path = self._to_tempfile(result, profile)
+                dst_path = self._to_tempfile(output_pixels, profile)
             else:
                 out_profile = profile.copy()
                 out_profile.update({"dtype": np.float32, "count": 1})
                 with rasterio.open(dst_path, "w", **out_profile) as dst:
-                    dst.write(result, 1)
+                    dst.write(output_pixels, 1)
 
             raster_layer = self._to_raster_layer(
                 result,
@@ -1249,6 +1279,18 @@ class RasterAnalyzer:
             )
             data = dict(raster_layer)
             data["dst_path"] = dst_path
+            valid_values = result[np.isfinite(result)]
+            unique_values, counts = np.unique(valid_values, return_counts=True)
+            data["class_counts"] = {
+                str(int(value)) if float(value).is_integer() else str(float(value)): int(count)
+                for value, count in zip(unique_values, counts)
+            }
+            # ``class_counts`` must describe only finite classified pixels.
+            # Keep the omitted nodata count explicit so the executor can
+            # enforce that downstream statistics never silently include it.
+            data["valid_pixel_count"] = int(valid_values.size)
+            data["nodata_pixel_count"] = int(result.size - valid_values.size)
+            data["total_pixel_count"] = int(result.size)
             return {"status": "success", "data": data}
         except Exception as e:
             logger.exception("reclassify_raster 失败: %s", e)

@@ -196,6 +196,222 @@ def test_native_tool_call_runs_through_real_sub_agent_graph() -> None:
     ]
 
 
+def test_native_executor_converts_semantically_wrong_success_to_error(monkeypatch) -> None:
+    """A handler cannot publish an out-of-radius POI merely by returning success."""
+    from app.agents import tool_execution
+
+    def wrong_poi(ctx):
+        return ToolResult(
+            tool_call_id=ctx.tool_call_id,
+            tool_name="query_poi",
+            status="success",
+            data={
+                "pois": [{
+                    "name": "far", "location": [118.806, 32.0429], "distance": 1.0,
+                    "crs": "GCJ02", "source": "Amap",
+                }],
+                "query": "奶茶", "center": [118.7845, 32.0429],
+                "radius_m": 500, "radius_tolerance_m": 5, "crs": "GCJ02",
+            },
+        )
+
+    monkeypatch.setitem(tool_execution._TOOL_REGISTRY, "query_poi", wrong_poi)
+    state = {
+        "agent_role": "poi",
+        "planner_output": SimpleNamespace(tool_calls=[SimpleNamespace(
+            name="query_poi", id="bad-radius", args={
+                "query": "奶茶", "location": [118.7845, 32.0429], "radius": 500,
+            },
+        )]),
+        "tool_results": [], "session_vars": {}, "iteration": 0,
+    }
+
+    result = tool_execution.native_tool_executor_node(state)
+    tool_result = result["tool_results"][-1]
+    assert tool_result.status == "error"
+    assert tool_result.error_code == "SEMANTIC_POSTCONDITION_FAILED"
+    assert "POI_OUTSIDE_RADIUS" in (tool_result.message or "")
+
+
+def test_poi_sse_semantic_summary_is_bounded_and_result_derived() -> None:
+    from app.agents.tool_execution import _tool_semantic_summary
+
+    summary = _tool_semantic_summary("query_poi", {
+        "query": "咖啡", "pois": [
+            {"location": [118.7845, 32.0429], "distance": 0.0},
+            {"location": [118.7850, 32.0429], "distance": 47.0},
+        ],
+        "center": [118.7845, 32.0429], "radius_m": 300,
+        "radius_tolerance_m": 5, "crs": "GCJ02",
+    })
+
+    assert summary == {
+        "kind": "poi_radius", "query": "咖啡", "poi_count": 2,
+        "center": [118.7845, 32.0429], "radius_m": 300.0,
+        "radius_tolerance_m": 5.0, "crs": "GCJ02", "max_distance_m": 47.0,
+    }
+
+
+def test_code_mode_returns_structured_error_for_semantically_wrong_success(monkeypatch) -> None:
+    """The sandbox proxy must enforce the same postcondition contract."""
+    from app.agents import tool_execution
+
+    def wrong_poi(ctx):
+        return ToolResult(
+            tool_call_id=ctx.tool_call_id,
+            tool_name="query_poi",
+            status="success",
+            data={
+                "pois": [{
+                    "name": "far", "location": [118.806, 32.0429], "distance": 1.0,
+                    "crs": "GCJ02", "source": "Amap",
+                }],
+                "query": "奶茶", "center": [118.7845, 32.0429],
+                "radius_m": 500, "radius_tolerance_m": 5, "crs": "GCJ02",
+            },
+        )
+
+    monkeypatch.setitem(tool_execution._TOOL_REGISTRY, "query_poi", wrong_poi)
+    query_poi = tool_execution._build_code_mode_tool_fns(get_spec("poi"), session_vars={})["query_poi"]
+
+    result = query_poi(query="奶茶", location=[118.7845, 32.0429], radius=500)
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "SEMANTIC_POSTCONDITION_FAILED"
+    assert "POI_OUTSIDE_RADIUS" in result["message"]
+
+
+def test_native_buffer_accepts_a_real_wgs84_input_after_gcj02_output_conversion() -> None:
+    """Postconditions compare geometries in one CRS, not raw display coordinates."""
+    from app.agents import tool_execution
+
+    source = {
+        "type": "FeatureCollection",
+        "_crs_label": "WGS84",
+        "features": [{
+            "type": "Feature", "properties": {"name": "origin"},
+            "geometry": {"type": "Point", "coordinates": [118.778, 32.038]},
+        }],
+    }
+    state = {
+        "agent_role": "geometer",
+        "planner_output": SimpleNamespace(tool_calls=[SimpleNamespace(
+            name="buffer", id="real-buffer", args={"geometry_from": 0, "radius_m": 100},
+        )]),
+        "tool_results": [], "iteration": 0,
+        "session_vars": {"dep_source": {"result": source}},
+    }
+
+    result = tool_execution.native_tool_executor_node(state)
+    tool_result = result["tool_results"][-1]
+
+    assert tool_result.status == "success"
+    assert tool_result.params == {"geometry_from": 0, "radius_m": 100}
+    assert tool_result.data["_crs_label"] == "GCJ02"
+
+
+def test_native_overlay_and_clip_preserve_real_topology_and_properties() -> None:
+    """The real handlers must satisfy the blocking topology postconditions."""
+    from app.agents import tool_execution
+
+    def collection(ring, **properties):
+        return {
+            "type": "FeatureCollection", "_crs_label": "WGS84",
+            "features": [{
+                "type": "Feature", "properties": properties,
+                "geometry": {"type": "Polygon", "coordinates": [ring]},
+            }],
+        }
+
+    left = collection(
+        [[118.776, 32.036], [118.780, 32.036], [118.780, 32.040], [118.776, 32.040], [118.776, 32.036]],
+        city="Nanjing",
+    )
+    right = collection(
+        [[118.778, 32.038], [118.782, 32.038], [118.782, 32.042], [118.778, 32.042], [118.778, 32.038]],
+        land="park",
+    )
+
+    def run(tool_name, args):
+        return tool_execution.native_tool_executor_node({
+            "agent_role": "geometer",
+            "planner_output": SimpleNamespace(tool_calls=[SimpleNamespace(name=tool_name, id=tool_name, args=args)]),
+            "tool_results": [], "iteration": 0,
+            "session_vars": {"dep_left": {"result": left}, "dep_right": {"result": right}},
+        })["tool_results"][-1]
+
+    overlay = run("overlay", {"geometry_a_from": 0, "geometry_b_from": 1, "how": "intersection"})
+    clipped = run("clip_layer", {"input_ref": 0, "overlay_ref": 1})
+
+    assert overlay.status == "success", overlay.message
+    assert clipped.status == "success", clipped.message
+    assert overlay.data["features"][0]["properties"]["city"] == "Nanjing"
+    assert overlay.data["features"][0]["properties"]["land"] == "park"
+    assert clipped.data["features"][0]["properties"]["city"] == "Nanjing"
+
+
+def test_native_export_rereads_the_real_geojson_before_success(tmp_path, monkeypatch) -> None:
+    """Export success reaches Dispatcher only after a real file round-trip check."""
+    from app.agents import tool_execution
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "APP_WORKSPACE_DIR", str(tmp_path))
+    source = {
+        "type": "FeatureCollection", "_crs_label": "WGS84",
+        "features": [
+            {"type": "Feature", "properties": {"name": "a"}, "geometry": {"type": "Point", "coordinates": [118.77, 32.03]}},
+            {"type": "Feature", "properties": {"name": "b"}, "geometry": {"type": "Point", "coordinates": [118.78, 32.04]}},
+        ],
+    }
+    result = tool_execution.native_tool_executor_node({
+        "agent_role": "geometer",
+        "planner_output": SimpleNamespace(tool_calls=[SimpleNamespace(
+            name="export_result", id="export", args={"data_from": 0, "format": "geojson", "output_path": "checked.geojson"},
+        )]),
+        "tool_results": [], "iteration": 0,
+        "session_vars": {"dep_source": {"result": source}},
+    })["tool_results"][-1]
+
+    assert result.status == "success", result.message
+    assert result.data["feature_count"] == 2
+    assert (tmp_path / "exports" / "checked.geojson").is_file()
+
+
+def test_native_reclassify_excludes_nodata_before_postcondition_success(tmp_path) -> None:
+    """The native result includes a verifiable valid/nodata pixel partition."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+    from app.agents import tool_execution
+
+    source_path = tmp_path / "source.tif"
+    output_path = tmp_path / "classified.tif"
+    with rasterio.open(
+        source_path, "w", driver="GTiff", width=2, height=1, count=1,
+        dtype="float32", crs="EPSG:4326", nodata=-9999.0,
+        transform=from_origin(118.77, 32.04, 0.001, 0.001),
+    ) as dataset:
+        dataset.write(np.array([[1.0, -9999.0]], dtype="float32"), 1)
+
+    result = tool_execution.native_tool_executor_node({
+        "agent_role": "geometer",
+        "planner_output": SimpleNamespace(tool_calls=[SimpleNamespace(
+            name="reclassify_raster", id="reclassify", args={
+                "src_path": str(source_path), "bins": [5.0], "values": [1.0, 2.0], "dst_path": str(output_path),
+            },
+        )]),
+        "tool_results": [], "iteration": 0, "session_vars": {},
+    })["tool_results"][-1]
+
+    assert result.status == "success", result.message
+    assert result.data["class_counts"] == {"1": 1}
+    assert result.data["valid_pixel_count"] == 1
+    assert result.data["nodata_pixel_count"] == 1
+    assert result.data["total_pixel_count"] == 2
+    with rasterio.open(output_path) as dataset:
+        assert dataset.read(1, masked=True).mask.tolist() == [[False, True]]
+
+
 def test_failed_native_step_revises_only_current_step_without_finishing() -> None:
     from app.agents import tool_execution
 
@@ -216,6 +432,38 @@ def test_failed_native_step_revises_only_current_step_without_finishing() -> Non
     assert result["should_stop"] is False
     assert "buffer" in result["messages"][0].content
     assert "radius_m is required" in result["messages"][0].content
+
+
+def test_empty_native_step_is_a_terminal_data_result_not_a_retry() -> None:
+    """A valid zero-row query must not repeat the provider call."""
+    from app.agents import tool_execution
+
+    empty_payload = {
+        "pois": [],
+        "query": "不存在的品牌",
+        "center": [118.7845, 32.0429],
+        "radius_m": 500,
+        "radius_tolerance_m": 5,
+        "crs": "GCJ02",
+    }
+    result = tool_execution.native_step_finalize_node({
+        "iteration": 1,
+        "max_iterations": 3,
+        "required_tool_name": "query_poi",
+        "tool_results": [ToolResult(
+            tool_call_id="call-empty-poi",
+            tool_name="query_poi",
+            status="empty",
+            data=empty_payload,
+            message="未找到相关 POI",
+            source="Amap",
+        )],
+    })
+
+    assert result["should_stop"] is True
+    assert result["decision"] == "FINISH"
+    assert result["final_output"]["status"] == "empty"
+    assert result["final_output"]["results"][0]["data"] == empty_payload
 
 
 def test_failed_native_tool_result_always_reaches_deterministic_finalize() -> None:

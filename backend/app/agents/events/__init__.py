@@ -46,6 +46,7 @@ EVENT_CONTRACTS: dict[str, tuple[str, str]] = {
     "tool.preflight.warning": ("tool.preflight.warning", "warning"),
     "tool.preflight.blocked": ("tool.preflight.blocked", "warning"),
     "tool.call.complete": ("tool.call.complete", "workflow_step"),
+    "tool.postcondition.failed": ("tool.postcondition.failed", "warning"),
     "tool.postflight.warning": ("tool.postflight.warning", "warning"),
     "tool.postflight.empty_result": ("tool.postflight.empty_result", "warning"),
     # Risk events
@@ -80,15 +81,23 @@ class EventCollector:
     when the event loop is closed.
     """
 
-    def __init__(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop | None = None,
+        *,
+        max_queue_size: int = 512,
+    ) -> None:
         """If *loop* is ``None``, uses ``asyncio.get_running_loop()``.
 
         The explicit *loop* parameter is mainly for testability; production
         callers always create the collector inside an async context.
         """
         self._loop = loop if loop is not None else asyncio.get_running_loop()
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=max(1, int(max_queue_size)),
+        )
         self._has_consumer = False
+        self._dropped_count = 0
         # Dedup tracker: (stage, code, tool_name) -> True
         self._dedup_set: set[tuple[str, str, str]] = set()
 
@@ -119,12 +128,12 @@ class EventCollector:
                 current = None
 
             if current is self._loop:
-                self._queue.put_nowait(item)
+                self._enqueue(item)
             elif self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
+                self._loop.call_soon_threadsafe(self._enqueue, item)
             else:
                 # Loop not running (sync test) → direct put_nowait
-                self._queue.put_nowait(item)
+                self._enqueue(item)
         except RuntimeError:
             logger.warning(
                 "EventCollector: loop closed, event dropped: %s", event,
@@ -145,11 +154,11 @@ class EventCollector:
                 current = None
 
             if current is self._loop:
-                self._queue.put_nowait(_SENTINEL)
+                self._enqueue(_SENTINEL)
             elif self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._queue.put_nowait, _SENTINEL)
+                self._loop.call_soon_threadsafe(self._enqueue, _SENTINEL)
             else:
-                self._queue.put_nowait(_SENTINEL)
+                self._enqueue(_SENTINEL)
         except RuntimeError:
             pass
 
@@ -193,9 +202,30 @@ class EventCollector:
         """Clear the dedup set (e.g. at the start of a new sub-agent run)."""
         self._dedup_set.clear()
 
+    @property
+    def dropped_count(self) -> int:
+        """Number of oldest events evicted because the consumer fell behind."""
+        return self._dropped_count
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _enqueue(self, item: Any) -> None:
+        """Append one event while keeping memory usage strictly bounded.
+
+        Preserve the newest lifecycle state (including the stop sentinel) by
+        evicting the oldest queued item when the SSE consumer is slower than
+        producers.  This method always runs on the collector's event loop in
+        production, including calls scheduled from worker threads.
+        """
+        if self._queue.full():
+            try:
+                self._queue.get_nowait()
+                self._dropped_count += 1
+            except asyncio.QueueEmpty:
+                pass
+        self._queue.put_nowait(item)
 
     @staticmethod
     def _dedup_key(event: str, payload: dict) -> tuple[str, str, str] | None:

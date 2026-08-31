@@ -226,3 +226,83 @@ class TestSSEEvents:
             # after the stream ended — so just verify it existed at some point
             # by checking that the collector was created and events were emitted)
             chat._collectors.pop("test-post-collector", None)
+
+    def test_older_same_session_run_cannot_unregister_newer_collector(self):
+        """An old stream's finally block must not remove a replacement run."""
+        from app.api import chat
+
+        loop = asyncio.new_event_loop()
+        old = EventCollector(loop=loop)
+        newer = EventCollector(loop=loop)
+        session_id = "same-session-overlap"
+        try:
+            chat._register_collector(session_id, old)
+            chat._register_collector(session_id, newer)
+
+            chat._unregister_collector(session_id, old)
+
+            assert chat._collectors[session_id] is newer
+            chat._unregister_collector(session_id, newer)
+            assert session_id not in chat._collectors
+        finally:
+            chat._collectors.pop(session_id, None)
+            loop.close()
+
+    def test_cancel_endpoint_suppresses_late_map_tokens_done_and_history(self, client):
+        """POST cancel is authoritative even when the SSE connection stays open."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+        from app.agents.run_control import RunState, get_run_controller
+
+        created = client.post("/api/sessions")
+        assert created.status_code == 201
+        session_id = created.json()["id"]
+        started = threading.Event()
+        release = threading.Event()
+        run_id_box: list[str] = []
+
+        def slow_success(*_args, run_id="", **_kwargs):
+            run_id_box.append(run_id)
+            started.set()
+            assert release.wait(5), "test did not release the synthetic running tool"
+            return {
+                "status": "success",
+                "dispatcher_events": [],
+                "react_trace": [],
+                "final_output": {
+                    "status": "success",
+                    "summary": "late answer must not be published",
+                    "map": {"layers": [{"type": "FeatureCollection", "features": []}]},
+                },
+            }
+
+        with patch("app.api.chat._run_loop_sync", side_effect=slow_success):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                response_future = pool.submit(
+                    client.post,
+                    "/api/chat",
+                    json={"session_id": session_id, "message": "cancel me"},
+                )
+                assert started.wait(5), "chat loop did not start"
+                run_id = run_id_box[0]
+                with TestClient(client.app) as cancel_client:
+                    cancelled = cancel_client.post(f"/api/runs/{run_id}/cancel")
+                assert cancelled.status_code == 200
+                assert cancelled.json()["status"] == "cancelled"
+                release.set()
+                response = response_future.result(timeout=30)
+
+        assert response.status_code == 200
+        assert "event: error" in response.text
+        assert '"code": "CANCELLED"' in response.text
+        assert "event: map" not in response.text
+        assert "event: token" not in response.text
+        assert "event: done" not in response.text
+        assert get_run_controller(run_id).state is RunState.CANCELLED
+
+        history = client.get(f"/api/sessions/{session_id}/messages")
+        assert history.status_code == 200
+        assert history.json()["messages"] == []

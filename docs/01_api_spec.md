@@ -89,7 +89,7 @@ SSE 事件格式遵循标准：每个事件由 `event:` / `data:` 行组成，�
 | `code.execution.start/complete/error` | `{executor_type, result, error_code, traceback}` | coder 沙箱执行过程 |
 | `judge.awaiting_input` | `{pending_task, issues, run_id, session_id}` | 当前步骤等待用户补参 |
 | `run.summary` / `run.completed` | `{message}` | 汇总/正常完成 |
-| `run.failed` | `{error_code, message}` | 工作流失败 |
+| `run.failed` | `{error_code, terminal_status, failed_tasks, message}` | 工作流失败或部分失败；不会再发 `run.completed` |
 | `tool.risk.detected/auto_repair/blocked` | `{risk_code, category, tool_name}` | 风险检测与处置 |
 | `status` | `{status, message}` | 状态提示（如"正在搜索备用数据源"） |
 | `token` | `{content}` | 文本增量，前端追加到当前 text block |
@@ -450,7 +450,8 @@ app.add_middleware(
 
 ---
 
-*文档版本：v1.3 | 最后更新：2026-08-09 | 属于 Gismind 补充文档*
+*文档版本：v1.4 | 最后更新：2026-08-31 | 属于 Gismind 补充文档*
 
 *v1.3 变更：补充 run.plan 工具级 DAG 契约、task 的 tool_name/instruction_id、确定性步骤执行与 coder Code-Mode 分界；修正实时事件名为当前 run.*/tool.*/code.* 契约。*
 *v1.1 变更：新增 §4 Sessions API（5 个端点）；SSE 事件 `tool_call` → `react_trace`；新增 X-User-Id 临时认证说明；更新 Dispatcher 与 SSE 映射*
+*v1.4 变更：补充 `planner_source` 来源枚举、`run.failed` 的终态字段，并明确失败流不再追加 `run.completed`。*

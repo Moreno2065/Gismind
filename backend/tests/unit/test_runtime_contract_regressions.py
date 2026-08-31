@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -547,12 +548,14 @@ def test_projected_geojson_can_be_buffered_without_inventing_invalid_epsg():
         geometry=[Point(118.78, 32.04)],
         crs="EPSG:4326",
     ).to_crs("EPSG:4548")
+    serialized = _gdf_to_dict(projected)
+    assert serialized["_crs_label"] == "EPSG:4548"
     result = _handle_buffer(_ToolContext(
         tool_call_id="buffer-projected",
         tool_name="buffer",
         iteration=1,
         params={"geometry_from": 0, "radius_m": 500},
-        results_data={0: _gdf_to_dict(projected)},
+        results_data={0: serialized},
         instances={"analyzer": SpatialAnalyzer()},
     ))
 
@@ -1067,6 +1070,7 @@ def test_dispatcher_events_use_single_dict_handler():
         reset_current_handler(token)
 
     assert [event["event"] for event in seen] == ["run.thought", "run.plan"]
+    assert seen[1]["upload_file_ids"] == []
     assert seen[1]["tasks"] == [{
         "id": "t1",
         "agent_role": "geo",
@@ -1074,6 +1078,7 @@ def test_dispatcher_events_use_single_dict_handler():
         "goal": "locate Nanjing",
         "depends_on": [],
         "instruction_id": "i1",
+        "tool_args": {},
         "status": "pending",
     }]
 
@@ -1303,6 +1308,37 @@ def test_query_poi_uses_representative_point_of_uploaded_polygon_reference():
     assert poi.location == pytest.approx((118.8, 32.05), abs=0.001)
 
 
+def test_query_poi_handler_preserves_provider_unavailable_as_an_error():
+    class UnavailablePOI:
+        def search_poi_tool(self, query, location, radius, **_kwargs):
+            return {
+                "status": "error",
+                "error_code": "POI_SOURCE_UNAVAILABLE",
+                "data": {
+                    "pois": [],
+                    "provider_status": {"Amap": "unavailable", "OSM": "unavailable"},
+                },
+                "source": None,
+                "message": "POI 数据源暂时不可用",
+            }
+
+    result = _handle_query_poi(_ToolContext(
+        tool_call_id="poi-unavailable",
+        tool_name="query_poi",
+        iteration=0,
+        params={"query": "茶百道", "location": [118.785349, 32.040633], "radius": 500},
+        results_data={},
+        instances={"poi": UnavailablePOI(), "geo_coder": MagicMock()},
+    ))
+
+    assert result.status == "error"
+    assert result.error_code == "POI_SOURCE_UNAVAILABLE"
+    assert result.data["provider_status"] == {
+        "Amap": "unavailable",
+        "OSM": "unavailable",
+    }
+
+
 def test_root_planner_receives_loaded_conversation_history():
     class CapturingLLM:
         def __init__(self):
@@ -1446,6 +1482,28 @@ def test_data_io_read_proxy_returns_json_safe_geojson(monkeypatch):
     assert result["data"]["features"][0]["properties"]["name"] == "uploaded"
     assert result["data"]["_crs_label"] == "GCJ02"
     json.dumps(result)
+
+
+def test_data_io_read_classifies_an_expired_upload_as_error_not_empty(monkeypatch):
+    """Missing persisted bytes are an invalid file reference, not a valid zero-row dataset."""
+    from app.agents.tool_execution import _handle_data_io_read
+
+    async def expired(_file_id):
+        return None
+
+    monkeypatch.setattr("app.agents.tool_execution._read_upload_from_redis", expired)
+    result = _handle_data_io_read(_ToolContext(
+        tool_call_id="expired-upload",
+        tool_name="data_io_read",
+        iteration=1,
+        params={"file_id": "file_expired"},
+        results_data={},
+        instances={},
+    ))
+
+    assert result.status == "error"
+    assert result.error_code == "UPLOAD_EXPIRED"
+    assert result.message == "上传文件已过期或不存在"
 
 
 def test_uploaded_gcj02_geometry_is_not_offset_a_second_time(monkeypatch):
@@ -1607,3 +1665,75 @@ async def test_upload_persistence_cleans_only_expired_payload_directories(
     assert not old_dir.exists()
     assert fresh_dir.exists()
     assert (upload_root / "new_file" / "original.geojson").exists()
+
+
+@pytest.mark.asyncio
+async def test_upload_cleanup_retries_a_transient_windows_file_lock(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "APP_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "UPLOAD_TTL_S", 1)
+    upload_root = tmp_path / "uploads"
+    old_dir = upload_root / "locked_file"
+    old_dir.mkdir(parents=True)
+    (old_dir / "original.geojson").write_text("old", encoding="utf-8")
+    expired = time.time() - 120
+    os.utime(old_dir, (expired, expired))
+
+    real_rmtree = shutil.rmtree
+    attempts = 0
+
+    def transient_lock(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError(5, "file is temporarily locked", str(path))
+        return real_rmtree(path)
+
+    monkeypatch.setattr("app.api.upload.shutil.rmtree", transient_lock)
+
+    await _persist_upload("new_after_lock", b'{}', "new.geojson")
+
+    assert attempts == 2
+    assert not old_dir.exists()
+    assert (upload_root / "new_after_lock" / "original.geojson").exists()
+
+
+@pytest.mark.asyncio
+async def test_upload_cleanup_treats_an_already_removed_candidate_as_success(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "APP_WORKSPACE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "UPLOAD_TTL_S", 1)
+    old_dir = tmp_path / "uploads" / "already_removed"
+    old_dir.mkdir(parents=True)
+
+    real_stat = Path.stat
+    real_is_dir = Path.is_dir
+    vanished = 0
+    armed = False
+
+    def existing_directory(path):
+        nonlocal armed
+        if path.name == "already_removed":
+            armed = True
+            return True
+        return real_is_dir(path)
+
+    def disappearing_stat(path, *args, **kwargs):
+        nonlocal vanished
+        if armed and path.name == "already_removed":
+            vanished += 1
+            raise FileNotFoundError(2, "removed by another cleanup worker", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", existing_directory)
+    monkeypatch.setattr(Path, "stat", disappearing_stat)
+    warning = MagicMock()
+    monkeypatch.setattr("app.api.upload.logger.warning", warning)
+
+    await _persist_upload("new_after_race", b'{}', "new.geojson")
+
+    assert vanished >= 1
+    warning.assert_not_called()
+    assert (tmp_path / "uploads" / "new_after_race" / "original.geojson").exists()

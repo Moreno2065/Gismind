@@ -488,9 +488,35 @@ def test_reclassify_range(analyzer):
     # <3 → 10, [3,6) → 20, [6,9) → 30, >=9 → 40
     expected = np.array([[10, 20, 20], [30, 40, 40]], dtype=np.float32)
     np.testing.assert_array_equal(out, expected)
+    assert result["data"]["class_counts"] == {
+        "10": 1,
+        "20": 2,
+        "30": 1,
+        "40": 2,
+    }
 
     os.unlink(src_path)
     os.unlink(result["data"]["dst_path"])
+
+
+def test_reclassify_excludes_source_nodata_from_classes_and_statistics(analyzer):
+    """A finite source nodata sentinel must never become a reclassified class."""
+    arr = np.array([[1.0, -9999.0]], dtype=np.float32)
+    src_path = _make_in_memory_raster(arr, nodata=-9999.0)
+    result = analyzer.reclassify_raster(
+        src_path,
+        bins=[5.0],
+        values=[1.0, 2.0],
+    )
+
+    assert result["status"] == "success"
+    data = result["data"]
+    assert data["class_counts"] == {"1": 1}
+    assert data["valid_pixel_count"] == 1
+    assert data["nodata_pixel_count"] == 1
+
+    os.unlink(src_path)
+    os.unlink(data["dst_path"])
 
 
 def test_reclassify_range_assigns_exact_boundary_values_to_the_upper_class(analyzer):
@@ -507,6 +533,25 @@ def test_reclassify_range_assigns_exact_boundary_values_to_the_upper_class(analy
     with rasterio.open(result["data"]["dst_path"]) as dst:
         out = dst.read(1)
     np.testing.assert_array_equal(out, np.array([[1, 2, 2, 3]], dtype=np.float32))
+
+    os.unlink(src_path)
+    os.unlink(result["data"]["dst_path"])
+
+
+def test_reclassify_range_snaps_float_noise_at_authored_boundaries(analyzer):
+    """Slope round-off near 15°/30° must snap into the authored upper bins."""
+    arr = np.array([[14.9999, 14.99999, 29.9999, 29.99999]], dtype=np.float32)
+    src_path = _make_in_memory_raster(arr)
+    result = analyzer.reclassify_raster(
+        src_path,
+        bins=[15, 30],
+        values=[1, 2, 3],
+    )
+
+    assert result["status"] == "success"
+    with rasterio.open(result["data"]["dst_path"]) as dst:
+        out = dst.read(1)
+    np.testing.assert_array_equal(out, np.array([[1, 2, 3, 3]], dtype=np.float32))
 
     os.unlink(src_path)
     os.unlink(result["data"]["dst_path"])

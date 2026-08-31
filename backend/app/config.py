@@ -25,13 +25,16 @@ class Settings(BaseSettings):
     AMAP_JS_KEY: str = ""
     AMAP_JS_SECURITY_CODE: str = ""
     AMAP_QPS_LIMIT: int = 5
-    AMAP_TIMEOUT: int = 3
+    # Public GIS providers often complete just over three seconds on a
+    # developer connection.  Five seconds still bounds a single-provider
+    # request while avoiding a false "unavailable" result for valid replies.
+    AMAP_TIMEOUT: int = 5
     AMAP_MAX_RETRY: int = 3
 
     # OSM
     OSM_ENDPOINT: str = "https://overpass-api.de/api/interpreter"
     OSM_BACKUP_ENDPOINTS: str = "https://overpass.kumi.systems/api/interpreter"
-    OSM_TIMEOUT: int = 3
+    OSM_TIMEOUT: int = 5
     OSM_MAX_RETRY: int = 1
 
     # Redis
