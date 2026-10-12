@@ -1,0 +1,1831 @@
+{
+  "operations": {
+    "aspect": {
+      "contract_hash": "legacy:aspect",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_aspect",
+      "legacy_name": "aspect",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "attribute.calculate": {
+      "contract_hash": "ef523689df35a67ccd215a0f1cc757026d98bf00259ae725bf947b50a571d150",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_attribute_calculate",
+      "legacy_name": "field_calculator",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_attribute_calculate",
+      "validator_ref": "app.runtime.contracts:_validate_public_attribute_calculate",
+      "version": "1.0.0"
+    },
+    "attribute.filter": {
+      "contract_hash": "0245baca98328635c33e6bdc7595f27bd0c44ef2ba84e91dc88fa70c786d6e67",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_attribute_filter",
+      "legacy_name": "extract_by_attribute",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_attribute_filter",
+      "validator_ref": "app.runtime.contracts:_validate_public_attribute_filter",
+      "version": "1.0.0"
+    },
+    "attribute.keep_fields": {
+      "contract_hash": "ad8330311fed9ce0ec784b88a6f53f1c9eb714bb750aec0044fd7d45c680c279",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_attribute_keep_fields",
+      "legacy_name": "keep_fields",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_attribute_keep_fields",
+      "validator_ref": "app.runtime.contracts:_validate_public_attribute_keep_fields",
+      "version": "1.0.0"
+    },
+    "attribute.rename_field": {
+      "contract_hash": "a09438ca1d7964540752cff7bccf15b7fd951e543b72875f518016fa01a93e50",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_attribute_rename_field",
+      "legacy_name": "rename_field",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_attribute_rename_field",
+      "validator_ref": "app.runtime.contracts:_validate_public_attribute_rename_field",
+      "version": "1.0.0"
+    },
+    "batch_reproject_layers": {
+      "contract_hash": "legacy:batch_reproject_layers",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_batch_reproject_layers",
+      "legacy_name": "batch_reproject_layers",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "bounding_boxes": {
+      "contract_hash": "legacy:bounding_boxes",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_bounding_boxes",
+      "legacy_name": "bounding_boxes",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "buffer": {
+      "contract_hash": "legacy:buffer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_buffer",
+      "legacy_name": "buffer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "centroid_layer": {
+      "contract_hash": "legacy:centroid_layer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_centroid_layer",
+      "legacy_name": "centroid_layer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "check_validity": {
+      "contract_hash": "legacy:check_validity",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_check_validity",
+      "legacy_name": "check_validity",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "clip_layer": {
+      "contract_hash": "legacy:clip_layer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_clip_layer",
+      "legacy_name": "clip_layer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "clip_raster_by_extent": {
+      "contract_hash": "legacy:clip_raster_by_extent",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_clip_raster_by_extent",
+      "legacy_name": "clip_raster_by_extent",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "clip_raster_by_mask": {
+      "contract_hash": "legacy:clip_raster_by_mask",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_clip_raster_by_mask",
+      "legacy_name": "clip_raster_by_mask",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "code.execute": {
+      "contract_hash": "e958fe1119d4dea808fa159d07b1ecc7ef1b87e10cfffa96fe53ab463bf5006d",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_code_execute_rejects_unsafe_source_before_ir_hashing"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_code_execute",
+      "legacy_name": "code_executor",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_code_execute_rejects_unsafe_source_before_ir_hashing"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_code"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_code_execute_rejects_unsafe_source_before_ir_hashing",
+      "validator": "app.runtime.contracts:_validate_public_code_execute",
+      "validator_ref": "app.runtime.contracts:_validate_public_code_execute",
+      "version": "1.0.0"
+    },
+    "code_executor": {
+      "contract_hash": "legacy:code_executor",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_code_executor",
+      "legacy_name": "code_executor",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "contour": {
+      "contract_hash": "legacy:contour",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_contour",
+      "legacy_name": "contour",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "convex_hull": {
+      "contract_hash": "legacy:convex_hull",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_convex_hull",
+      "legacy_name": "convex_hull",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "coordinate.convert": {
+      "contract_hash": "42b4dbaced58e8107bd0db5a748034102337c3f2994f69c7006fb07d281fcef2",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_coordinate_convert",
+      "legacy_name": null,
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_coordinate"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject",
+      "validator": "app.runtime.contracts:_validate_public_coordinate_convert",
+      "validator_ref": "app.runtime.contracts:_validate_public_coordinate_convert",
+      "version": "1.1.0"
+    },
+    "count_points_in_polygon": {
+      "contract_hash": "legacy:count_points_in_polygon",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_count_points_in_polygon",
+      "legacy_name": "count_points_in_polygon",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "csv_to_points": {
+      "contract_hash": "legacy:csv_to_points",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_csv_to_points",
+      "legacy_name": "csv_to_points",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "data_io_read": {
+      "contract_hash": "legacy:data_io_read",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_data_io_read",
+      "legacy_name": "data_io_read",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "delete_duplicate_geometries": {
+      "contract_hash": "legacy:delete_duplicate_geometries",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_delete_duplicate_geometries",
+      "legacy_name": "delete_duplicate_geometries",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "dissolve_layer": {
+      "contract_hash": "legacy:dissolve_layer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_dissolve_layer",
+      "legacy_name": "dissolve_layer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "export_result": {
+      "contract_hash": "legacy:export_result",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_export_result",
+      "legacy_name": "export_result",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "extract_by_attribute": {
+      "contract_hash": "legacy:extract_by_attribute",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_extract_by_attribute",
+      "legacy_name": "extract_by_attribute",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "extract_by_location": {
+      "contract_hash": "legacy:extract_by_location",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_extract_by_location",
+      "legacy_name": "extract_by_location",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "field_calculator": {
+      "contract_hash": "legacy:field_calculator",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_field_calculator",
+      "legacy_name": "field_calculator",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "file.export": {
+      "contract_hash": "292842964b4648511c3960e189363b33d06a0237d37afb881e957793519d4995",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_file_export",
+      "legacy_name": "export_result",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_file_export"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect",
+      "validator": "app.runtime.contracts:_validate_public_file_export",
+      "validator_ref": "app.runtime.contracts:_validate_public_file_export",
+      "version": "1.0.0"
+    },
+    "fix_geometries": {
+      "contract_hash": "legacy:fix_geometries",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_fix_geometries",
+      "legacy_name": "fix_geometries",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "geo.geocode": {
+      "contract_hash": "d5ed84588a2fc6cb17ee4aa4541b52327bf5d3e684a991a35ba1d56a36382bf6",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_geo_geocode",
+      "legacy_name": "geo_code",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_geo_geocode"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_geo_geocode",
+      "validator_ref": "app.runtime.contracts:_validate_public_geo_geocode",
+      "version": "1.0.0"
+    },
+    "geo.transform": {
+      "contract_hash": "e442af5923bd8a98fa0a08819ce3431d3634c704162cb7aa2c07149f51930358",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_geo_transform",
+      "legacy_name": "geo_transform",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_coordinate"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_geo_transform",
+      "validator_ref": "app.runtime.contracts:_validate_public_geo_transform",
+      "version": "1.1.0"
+    },
+    "geo_code": {
+      "contract_hash": "legacy:geo_code",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_geo_code",
+      "legacy_name": "geo_code",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "geo_transform": {
+      "contract_hash": "legacy:geo_transform",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_geo_transform",
+      "legacy_name": "geo_transform",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "hillshade": {
+      "contract_hash": "legacy:hillshade",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_hillshade",
+      "legacy_name": "hillshade",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "inspect_workspace": {
+      "contract_hash": "legacy:inspect_workspace",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_inspect_workspace",
+      "legacy_name": "inspect_workspace",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "io.csv_to_points": {
+      "contract_hash": "d3fb74ccaac2adee5cc0784d022ff906fe6f1b20c9acedf35d9517c616b3d6c8",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_io_csv_to_points",
+      "legacy_name": "csv_to_points",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_io_csv_to_points",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_csv_to_points",
+      "version": "1.0.0"
+    },
+    "io.load_csv": {
+      "contract_hash": "6acd13d046fba983f71aaca21697a017b6f26f5040da5836509fbb7d0c943a04",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_io_load_csv",
+      "legacy_name": "load_csv",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_table"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_io_load_csv",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_load_csv",
+      "version": "1.0.0"
+    },
+    "io.load_raster": {
+      "contract_hash": "3bf9c1279cf288f4017b52ff3fbdca77495fd88ea1da73ea528830ad70204040",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_io_load_raster",
+      "legacy_name": "load_raster",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_io_load_raster",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_load_raster",
+      "version": "1.0.0"
+    },
+    "io.load_vector": {
+      "contract_hash": "008de7e24fde02f378b319bead86703d6b3ec6da838692a7b468f8ca7084d0bf",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_contract_models_parse_and_canonical_plan_is_serializable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_io_load_vector",
+      "legacy_name": "load_vector",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_contract_models_parse_and_canonical_plan_is_serializable"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_contract_models_parse_and_canonical_plan_is_serializable",
+      "validator": "app.runtime.contracts:_validate_public_io_load_vector",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_load_vector",
+      "version": "1.0.0"
+    },
+    "io.read_upload": {
+      "contract_hash": "ac22a386bc26e66ce4813ee12f01efccbf1636d25f95608b04d5dcbd3b73dde4",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_io_read_upload",
+      "legacy_name": "data_io_read",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_file"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_io_read_upload",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_read_upload",
+      "version": "1.0.0"
+    },
+    "io.summarize": {
+      "contract_hash": "497f47de9b478cafe9475f76e81404c979e1c8f6ca055d8225ae029e0217b7b9",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_io_summarize",
+      "legacy_name": "summarize_layer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_table"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_io_summarize",
+      "validator_ref": "app.runtime.contracts:_validate_public_io_summarize",
+      "version": "1.0.0"
+    },
+    "isochrone": {
+      "contract_hash": "legacy:isochrone",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_isochrone",
+      "legacy_name": "isochrone",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "join_by_location": {
+      "contract_hash": "legacy:join_by_location",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_join_by_location",
+      "legacy_name": "join_by_location",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "join_by_nearest": {
+      "contract_hash": "legacy:join_by_nearest",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_join_by_nearest",
+      "legacy_name": "join_by_nearest",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "keep_fields": {
+      "contract_hash": "legacy:keep_fields",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_keep_fields",
+      "legacy_name": "keep_fields",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "load_csv": {
+      "contract_hash": "legacy:load_csv",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_load_csv",
+      "legacy_name": "load_csv",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "load_raster": {
+      "contract_hash": "legacy:load_raster",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_load_raster",
+      "legacy_name": "load_raster",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "load_skill": {
+      "contract_hash": "legacy:load_skill",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_load_skill",
+      "legacy_name": "load_skill",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "load_vector": {
+      "contract_hash": "legacy:load_vector",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_load_vector",
+      "legacy_name": "load_vector",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "map.build": {
+      "contract_hash": "6c9312479c12b55f912e96f2477692e38497d5581983233610db1988bbaa0607",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_map_and_datum_contracts_are_documented_shapes"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_map_build",
+      "legacy_name": "map_layer_build",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_map_and_datum_contracts_are_documented_shapes"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_map"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_map_and_datum_contracts_are_documented_shapes",
+      "validator": "app.runtime.contracts:_validate_public_map_build",
+      "validator_ref": "app.runtime.contracts:_validate_public_map_build",
+      "version": "1.0.0"
+    },
+    "map_layer_build": {
+      "contract_hash": "legacy:map_layer_build",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_map_layer_build",
+      "legacy_name": "map_layer_build",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "merge_layers": {
+      "contract_hash": "legacy:merge_layers",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_merge_layers",
+      "legacy_name": "merge_layers",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "multipart_to_singlepart": {
+      "contract_hash": "legacy:multipart_to_singlepart",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_multipart_to_singlepart",
+      "legacy_name": "multipart_to_singlepart",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "overlay": {
+      "contract_hash": "legacy:overlay",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_overlay",
+      "legacy_name": "overlay",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "poi.search": {
+      "contract_hash": "1f9f04041de9ec82c33a8a14183e818ef6373507dc605c0637f1e0668ac64ef6",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_poi_search",
+      "legacy_name": "query_poi",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_poi_search"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_poi_search",
+      "validator_ref": "app.runtime.contracts:_validate_public_poi_search",
+      "version": "1.0.0"
+    },
+    "point_on_surface": {
+      "contract_hash": "legacy:point_on_surface",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_point_on_surface",
+      "legacy_name": "point_on_surface",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "polygonize_raster": {
+      "contract_hash": "legacy:polygonize_raster",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_polygonize_raster",
+      "legacy_name": "polygonize_raster",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "proactive_clarification": {
+      "contract_hash": "legacy:proactive_clarification",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_proactive_clarification",
+      "legacy_name": "proactive_clarification",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "publish_file": {
+      "contract_hash": "15260d817d0824914d37f118c24560260ed2762f4b65bf194d77907142d7a225",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_publish_file",
+      "legacy_name": "export_result",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_publish_file"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_file_export_is_managed_artifact_and_publish_file_is_explicit_side_effect",
+      "validator": "app.runtime.contracts:_validate_public_publish_file",
+      "validator_ref": "app.runtime.contracts:_validate_public_publish_file",
+      "version": "1.1.0"
+    },
+    "query_poi": {
+      "contract_hash": "legacy:query_poi",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_query_poi",
+      "legacy_name": "query_poi",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "raster.aspect": {
+      "contract_hash": "bcdc3cad4eff3cfe859affd697c751de3bb700ac254505c6ecba1d7cb0b819db",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_aspect",
+      "legacy_name": "aspect",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_aspect",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_aspect",
+      "version": "1.0.0"
+    },
+    "raster.calculate": {
+      "contract_hash": "d71bb51083f7368be9f5d8ed2438a944774aeb8cd5dd85a4b78586d9086727a2",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_calculate",
+      "legacy_name": "raster_calculator",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_calculate",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_calculate",
+      "version": "1.0.0"
+    },
+    "raster.clip_extent": {
+      "contract_hash": "5863706760ffec86e339e8d03e1adf08802c6dc617f6394cb43d73ecde67c9f3",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_clip_extent",
+      "legacy_name": "clip_raster_by_extent",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_clip_extent",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_clip_extent",
+      "version": "1.0.0"
+    },
+    "raster.clip_mask": {
+      "contract_hash": "56321ef86f4e98816ffdffe34312685bc7cbcadfeb9f2f6aaaf10919923acf39",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_clip_mask",
+      "legacy_name": "clip_raster_by_mask",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_clip_mask",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_clip_mask",
+      "version": "1.0.0"
+    },
+    "raster.contour": {
+      "contract_hash": "fe030d9335ad43bd3b8c4b3c31b0dc95208a5e2b9b42dd8d8f50490a041fdde6",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_contour",
+      "legacy_name": "contour",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_contour",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_contour",
+      "version": "1.0.0"
+    },
+    "raster.hillshade": {
+      "contract_hash": "d87b1126ba5d249a54aa57acb4e7e52fcb0a65868f5b948a46406f486d8520cc",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_hillshade",
+      "legacy_name": "hillshade",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_hillshade",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_hillshade",
+      "version": "1.0.0"
+    },
+    "raster.polygonize": {
+      "contract_hash": "bdcca3255144bcb13a3e4ff14582de5092184de38a79a3f52576c3afb133ca11",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_polygonize",
+      "legacy_name": "polygonize_raster",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_polygonize",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_polygonize",
+      "version": "1.0.0"
+    },
+    "raster.reclassify": {
+      "contract_hash": "03c298fcbbb0e99fc30dbbf7260b5f0846ac37b9329c2dfe98ea64a638f16f52",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_reclassify",
+      "legacy_name": "reclassify_raster",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_reclassify",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_reclassify",
+      "version": "1.0.0"
+    },
+    "raster.reproject": {
+      "contract_hash": "64934a81eb41d43f20c61640cf3ceef7c9decb4c2d97698a76ef7b1042e39395",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_raster_reproject",
+      "legacy_name": "reproject_raster",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster_reproject"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer",
+      "validator": "app.runtime.contracts:_validate_public_raster_reproject",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_reproject",
+      "version": "1.0.0"
+    },
+    "raster.reproject_many": {
+      "contract_hash": "872565b2c107ac748a854c1ea6ddb6ba09e0f141580cfa2f34620ffadee3889b",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_raster_reproject_many",
+      "legacy_name": "reproject_raster",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster_reproject_many"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract",
+      "validator": "app.runtime.contracts:_validate_public_raster_reproject_many",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_reproject_many",
+      "version": "1.0.0"
+    },
+    "raster.roughness": {
+      "contract_hash": "b967f365370bc08de9661483b5c255bdf2223caa8819b1d5501e53f0e26fc674",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_roughness",
+      "legacy_name": "roughness",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_roughness",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_roughness",
+      "version": "1.0.0"
+    },
+    "raster.sample": {
+      "contract_hash": "c736308fe18b9d7fedd2b723af43762ba84bda6c7cdf1d32d007dd1497d589bb",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_sample",
+      "legacy_name": "raster_sampling",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_table"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_sample",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_sample",
+      "version": "1.0.0"
+    },
+    "raster.slope": {
+      "contract_hash": "d54af136314b2871242a6e453be03455cc8118b31ed56c4e0344d54c9965d30b",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_slope",
+      "legacy_name": "slope",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster_slope"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_slope",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_slope",
+      "version": "1.0.0"
+    },
+    "raster.tpi": {
+      "contract_hash": "e6e4a792660ec88a02326614f858d8639712e894e95eb253d4ffa7eebe23402d",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_tpi",
+      "legacy_name": "topographic_position_index",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_tpi",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_tpi",
+      "version": "1.0.0"
+    },
+    "raster.tri": {
+      "contract_hash": "a908b34e21cd62858be713eff2da9ccca50e6139bf57f053df3486213202adf7",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_tri",
+      "legacy_name": "terrain_ruggedness_index",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_tri",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_tri",
+      "version": "1.0.0"
+    },
+    "raster.vectorize": {
+      "contract_hash": "c98d24f5a53005c412377f441a6d2c9523f924f9aaac29a915981bea2a8588e5",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_vectorize",
+      "legacy_name": "rasterize_vector",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_raster"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_vectorize",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_vectorize",
+      "version": "1.0.0"
+    },
+    "raster.zonal_statistics": {
+      "contract_hash": "de7c58704479794947d15d71a37ff55d0c5bca931af9cccfb0499bda2a5148d7",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_raster_zonal_statistics",
+      "legacy_name": "zonal_statistics",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_table"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_raster_zonal_statistics",
+      "validator_ref": "app.runtime.contracts:_validate_public_raster_zonal_statistics",
+      "version": "1.0.0"
+    },
+    "raster_calculator": {
+      "contract_hash": "legacy:raster_calculator",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_raster_calculator",
+      "legacy_name": "raster_calculator",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "raster_sampling": {
+      "contract_hash": "legacy:raster_sampling",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_raster_sampling",
+      "legacy_name": "raster_sampling",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "rasterize_vector": {
+      "contract_hash": "legacy:rasterize_vector",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_rasterize_vector",
+      "legacy_name": "rasterize_vector",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "reclassify_raster": {
+      "contract_hash": "legacy:reclassify_raster",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_reclassify_raster",
+      "legacy_name": "reclassify_raster",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "rename_field": {
+      "contract_hash": "legacy:rename_field",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_rename_field",
+      "legacy_name": "rename_field",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "reproject_layer": {
+      "contract_hash": "legacy:reproject_layer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_reproject_layer",
+      "legacy_name": "reproject_layer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "reproject_raster": {
+      "contract_hash": "legacy:reproject_raster",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_reproject_raster",
+      "legacy_name": "reproject_raster",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "roughness": {
+      "contract_hash": "legacy:roughness",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_roughness",
+      "legacy_name": "roughness",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "select_toolkit": {
+      "contract_hash": "legacy:select_toolkit",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_select_toolkit",
+      "legacy_name": "select_toolkit",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "simplify_geometry": {
+      "contract_hash": "legacy:simplify_geometry",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_simplify_geometry",
+      "legacy_name": "simplify_geometry",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "slope": {
+      "contract_hash": "legacy:slope",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_slope",
+      "legacy_name": "slope",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "snap_geometries": {
+      "contract_hash": "legacy:snap_geometries",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_snap_geometries",
+      "legacy_name": "snap_geometries",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "suggest_skill": {
+      "contract_hash": "legacy:suggest_skill",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_suggest_skill",
+      "legacy_name": "suggest_skill",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "summarize_layer": {
+      "contract_hash": "legacy:summarize_layer",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_summarize_layer",
+      "legacy_name": "summarize_layer",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "terrain_ruggedness_index": {
+      "contract_hash": "legacy:terrain_ruggedness_index",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_terrain_ruggedness_index",
+      "legacy_name": "terrain_ruggedness_index",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "topographic_position_index": {
+      "contract_hash": "legacy:topographic_position_index",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_topographic_position_index",
+      "legacy_name": "topographic_position_index",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "vector.bounding_boxes": {
+      "contract_hash": "54bebe9d498a73e27f07677cc98bc20efd971c85597ad8ee946f6c9e2bcccf6f",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_bounding_boxes",
+      "legacy_name": "bounding_boxes",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_bounding_boxes",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_bounding_boxes",
+      "version": "1.0.0"
+    },
+    "vector.buffer": {
+      "contract_hash": "c0826663b42c10b72d8f1b214eaeee18dc14b5451acee39b47a012b364b8dc98",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_compiler_rejects_duplicate_keys_cycles_and_bad_refs"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_vector_buffer",
+      "legacy_name": "buffer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_compiler_rejects_duplicate_keys_cycles_and_bad_refs"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_buffer"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_compiler_rejects_duplicate_keys_cycles_and_bad_refs",
+      "validator": "app.runtime.contracts:_validate_public_vector_buffer",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_buffer",
+      "version": "1.0.0"
+    },
+    "vector.centroid": {
+      "contract_hash": "429ba836f53724fd2317c3c78c1c965415c2be7efcbd7da06309bb433da5e4ee",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_centroid",
+      "legacy_name": "centroid_layer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_centroid",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_centroid",
+      "version": "1.0.0"
+    },
+    "vector.check_validity": {
+      "contract_hash": "e206ffc14cdd3fb0c81eaec2bc0c24226165c7216044366f5733d0f4e6c0c990",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_check_validity",
+      "legacy_name": "check_validity",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_table"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_check_validity",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_check_validity",
+      "version": "1.0.0"
+    },
+    "vector.clip": {
+      "contract_hash": "29c87f487319cf9621274eec2754ea7dc35e25be18b3bbd6854b7f5b08773437",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_clip",
+      "legacy_name": "clip_layer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_clip",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_clip",
+      "version": "1.0.0"
+    },
+    "vector.convert_datum": {
+      "contract_hash": "841de4e9da79aef0d16d34b171b844ff6a29c0864e97d865cc518b049f56617a",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_vector_convert_datum",
+      "legacy_name": "geo_transform",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_convert_datum"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_gcj02_requires_coordinate_conversion_contract_not_vector_reproject",
+      "validator": "app.runtime.contracts:_validate_public_vector_convert_datum",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_convert_datum",
+      "version": "1.0.0"
+    },
+    "vector.convex_hull": {
+      "contract_hash": "d0021b7ea436652281b1886293238b587917ae0cc2ee177542014443b7919654",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_convex_hull",
+      "legacy_name": "convex_hull",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_convex_hull",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_convex_hull",
+      "version": "1.0.0"
+    },
+    "vector.count_points": {
+      "contract_hash": "88272c325a95db4eea6d312e2556837c560ace2d772379fdf632d2a1e4e0f30d",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_count_points",
+      "legacy_name": "count_points_in_polygon",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_count_points",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_count_points",
+      "version": "1.0.0"
+    },
+    "vector.delete_duplicates": {
+      "contract_hash": "24d667eee5926ad3f97ed04c5abf021a77d702c5a75d141d1b83b1f94d5794a7",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_delete_duplicates",
+      "legacy_name": "delete_duplicate_geometries",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_delete_duplicates"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_delete_duplicates",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_delete_duplicates",
+      "version": "1.0.0"
+    },
+    "vector.dissolve": {
+      "contract_hash": "decbdcc0cb258bb20e9e866092ec32de56b945d084fbde0cdaf65a88ff695b3a",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_dissolve",
+      "legacy_name": "dissolve_layer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_dissolve",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_dissolve",
+      "version": "1.0.0"
+    },
+    "vector.extract_location": {
+      "contract_hash": "f0b34033fb7062e23ad308e1d1c329019a2b6422903f5ea7a8b39258018f8e15",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_extract_location",
+      "legacy_name": "extract_by_location",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_extract_location",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_extract_location",
+      "version": "1.0.0"
+    },
+    "vector.fix_geometries": {
+      "contract_hash": "543d8dbfa53bf001c251d4921f0feca1b8cc10ba2c6a1fe8515649020bd3dcc8",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_fix_geometries",
+      "legacy_name": "fix_geometries",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_fix_geometries",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_fix_geometries",
+      "version": "1.0.0"
+    },
+    "vector.isochrone": {
+      "contract_hash": "a755ae33e556eb1e2b7530b23a381c191aeb17bb77067e75d5b69236fe888096",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_isochrone",
+      "legacy_name": "isochrone",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_isochrone",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_isochrone",
+      "version": "1.0.0"
+    },
+    "vector.join_location": {
+      "contract_hash": "253a923d84e41edd1ebfb16ecc541e7912dc614b8a5b236411fc8eab7887af2b",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_join_location",
+      "legacy_name": "join_by_location",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_join_location",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_join_location",
+      "version": "1.0.0"
+    },
+    "vector.join_nearest": {
+      "contract_hash": "a34696254cf17001b12cd26b1f009305174eaf8f18f21cf56bbe20c98a7bbd7f",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_join_nearest",
+      "legacy_name": "join_by_nearest",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_join_nearest",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_join_nearest",
+      "version": "1.0.0"
+    },
+    "vector.merge": {
+      "contract_hash": "7e413bb3f642fa00673ddcfe5a01cdee3a6729d30e296651bf864c5be0177df5",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_merge",
+      "legacy_name": "merge_layers",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_merge",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_merge",
+      "version": "1.0.0"
+    },
+    "vector.multipart_to_singlepart": {
+      "contract_hash": "cadf080942838ca8d0ea5c126b81d8f5db2f190fc5c680d95364a4c378be68b3",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_multipart_to_singlepart",
+      "legacy_name": "multipart_to_singlepart",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_multipart_to_singlepart",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_multipart_to_singlepart",
+      "version": "1.0.0"
+    },
+    "vector.overlay": {
+      "contract_hash": "ba231346e348e704ff7f97f445ea1b84fb14a3c9fbba24277dc4df16b5478edc",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_overlay",
+      "legacy_name": "overlay",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_overlay",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_overlay",
+      "version": "1.0.0"
+    },
+    "vector.point_on_surface": {
+      "contract_hash": "434c5f830defa1a2ad6fc0cead0bbe9a5131f697b0274f55d0487fcc823cf775",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_point_on_surface",
+      "legacy_name": "point_on_surface",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_point_on_surface",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_point_on_surface",
+      "version": "1.0.0"
+    },
+    "vector.reproject": {
+      "contract_hash": "b5dadcead141accddc0605a4384042dae8dfb3a03ba53050138d9ecc59cf617a",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_vector_reproject",
+      "legacy_name": "reproject_layer",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_reproject"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_crs_propagates_through_consumer_before_producer",
+      "validator": "app.runtime.contracts:_validate_public_vector_reproject",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_reproject",
+      "version": "1.1.0"
+    },
+    "vector.reproject_many": {
+      "contract_hash": "35b28712dfdecd832034162de1e4d3602af67dec6168d6b3e8332bf4fc50375c",
+      "contract_tests": [
+        "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.contracts:_handle_vector_reproject_many",
+      "legacy_name": "batch_reproject_layers",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract"
+        ]
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_reproject_many"
+      ],
+      "test_node": "tests/unit/test_runtime_compiler_phase2.py::test_many_auto_reprojection_uses_many_conversion_contract",
+      "validator": "app.runtime.contracts:_validate_public_vector_reproject_many",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_reproject_many",
+      "version": "1.1.0"
+    },
+    "vector.simplify": {
+      "contract_hash": "d9387733a42c4ec999d38af165f85a3584af5c6b2ef3cff1613b3e08809124d0",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_simplify",
+      "legacy_name": "simplify_geometry",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_simplify",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_simplify",
+      "version": "1.0.0"
+    },
+    "vector.snap": {
+      "contract_hash": "80f25425d944f0d15dcce45d160ae71bc75fc23bcdfffb84e6a81466812c6bd9",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_snap",
+      "legacy_name": "snap_geometries",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_snap",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_snap",
+      "version": "1.0.0"
+    },
+    "vector.voronoi": {
+      "contract_hash": "e06913b611499ecb372f52861e330e7bb6f9236cb8244b57f4a66479607a48d0",
+      "contract_tests": [
+        "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+      ],
+      "disposition": "migrate",
+      "handler_ref": "app.runtime.tool_handlers:handle_vector_voronoi",
+      "legacy_name": "voronoi",
+      "manifest": {
+        "contract_tests": [
+          "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"
+        ],
+        "migration": "runtime"
+      },
+      "postconditions": [
+        "app.runtime.postconditions:validate_vector_generic"
+      ],
+      "test_node": "tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable",
+      "validator": "app.runtime.contracts:_validate_public_vector_voronoi",
+      "validator_ref": "app.runtime.contracts:_validate_public_vector_voronoi",
+      "version": "1.0.0"
+    },
+    "voronoi": {
+      "contract_hash": "legacy:voronoi",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_voronoi",
+      "legacy_name": "voronoi",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    },
+    "zonal_statistics": {
+      "contract_hash": "legacy:zonal_statistics",
+      "disposition": "active",
+      "handler_ref": "app.agents.tool_execution:_handle_zonal_statistics",
+      "legacy_name": "zonal_statistics",
+      "test_node": "tests/unit/test_runtime_tool_migration_phase5.py::test_phase5_registry_covers_every_executable_non_kernel_handler",
+      "validator_ref": "app.runtime.contracts:_validate_runtime_artifact",
+      "version": "legacy-1"
+    }
+  },
+  "schema_version": "phase5"
+}

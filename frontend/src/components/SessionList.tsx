@@ -26,7 +26,6 @@ export function SessionList({
   onDelete,
   onCreate,
 }: Props) {
-  const archivedCount = 0; // 当前后端不分 active/archived，预留位
   const activeCount = sessions.length;
 
   return (
@@ -35,13 +34,13 @@ export function SessionList({
       <div className="px-3 pt-3">
         <div className="flex items-baseline justify-between">
           <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-ink-300">
-            GISMIND · SESSIONS
+            分析会话
           </span>
         </div>
         <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.18em] text-ink-500">
           {activeCount === 0
             ? '空会话'
-            : `${activeCount} active · ${archivedCount} archived`}
+            : `${activeCount} 个会话`}
         </div>
       </div>
 
@@ -60,7 +59,7 @@ export function SessionList({
           </div>
         ) : sessions.length === 0 ? (
           <div className="font-mono text-[9px] leading-relaxed text-ink-500">
-            No dispatches yet. Press ➕ to begin.
+            从一份数据、一个空间问题开始。
           </div>
         ) : (
           <div className="space-y-2">
@@ -95,7 +94,7 @@ export function SessionList({
             'hover:bg-amber/10',
           )}
         >
-          + NEW DISPATCH
+          + 新建会话
         </button>
       </div>
     </div>

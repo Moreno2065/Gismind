@@ -21,8 +21,7 @@ export default defineConfig(() => {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
-          // SSE streaming: do not buffer
-          // (no ws rewrite needed; /api/chat is HTTP streaming)
+          // Runtime SSE events are standard HTTP streaming.
         },
       },
     },
@@ -35,7 +34,7 @@ export default defineConfig(() => {
             react: ['react', 'react-dom'],
             markdown: ['react-markdown', 'remark-gfm'],
             amap: ['@amap/amap-jsapi-loader'],
-            echarts: ['echarts'],
+            zrender: ['zrender'],
           },
         },
       },

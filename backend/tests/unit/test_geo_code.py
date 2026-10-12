@@ -1,10 +1,23 @@
-"""geo_code 单元测试。全部 mock httpx，不消耗真实高德配额。"""
+"""geo_code 单元测试。全部 mock httpx，不消耗真实高德配额。
+
+GeoCoder 的阶段7缓存是进程内可丢弃状态，不依赖 Redis；每个测试清空
+``app.tools.geo_code._CACHE`` 后验证同一进程内的命中行为。
+"""
 
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
+import app.tools.geo_code as geo_code
 from app.tools.geo_code import GeoCoder
+
+
+@pytest.fixture(autouse=True)
+def clear_process_cache():
+    """Isolate tests while exercising GeoCoder's process-local cache."""
+    geo_code._CACHE.clear()
+    yield
+    geo_code._CACHE.clear()
 
 
 def _mock_response(json_data, status_code=200):
@@ -16,7 +29,7 @@ def _mock_response(json_data, status_code=200):
 
 
 class TestGeocode:
-    async def test_geocode_success(self, fake_redis):
+    async def test_geocode_success(self):
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
             "status": "1",
@@ -36,7 +49,7 @@ class TestGeocode:
         assert "新街口" in result["formatted_address"]
         assert result["source"] == "Amap"
 
-    async def test_geocode_cached_skips_api(self, fake_redis):
+    async def test_geocode_cached_skips_api(self):
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
             "status": "1",
@@ -58,7 +71,7 @@ class TestGeocode:
             assert second["cached"] is True
             assert second["location"] == [118.7845, 32.0429]
 
-    async def test_geocode_empty_result(self, fake_redis):
+    async def test_geocode_empty_result(self):
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({"status": "1", "geocodes": []})
         with patch("app.tools.geo_code.httpx.AsyncClient") as mock_client_cls:
@@ -72,7 +85,7 @@ class TestGeocode:
 
         assert result["status"] == "empty"
 
-    async def test_geocode_timeout_returns_empty(self, fake_redis):
+    async def test_geocode_timeout_returns_empty(self):
         geo = GeoCoder(amap_key="test_key")
         import httpx
         with patch("app.tools.geo_code.httpx.AsyncClient") as mock_client_cls:
@@ -87,7 +100,7 @@ class TestGeocode:
         assert result["status"] == "empty"
         assert "暂不可用" in result["message"]
 
-    async def test_geocode_fallback_nominatim(self, fake_redis):
+    async def test_geocode_fallback_nominatim(self):
         """高德返回空時應 fallback 到 OSM Nominatim。"""
         geo = GeoCoder(amap_key="test_key")
         amap_empty = _mock_response({"status": "1", "geocodes": []})
@@ -112,7 +125,7 @@ class TestGeocode:
         assert "安徽师范大学" in result["formatted_address"]
         assert len(result["candidates"]) == 1
 
-    async def test_geocode_both_sources_empty(self, fake_redis):
+    async def test_geocode_both_sources_empty(self):
         """高德和 Nominatim 都返回空時應返回 empty。"""
         geo = GeoCoder(amap_key="test_key")
         amap_empty = _mock_response({"status": "1", "geocodes": []})
@@ -128,12 +141,12 @@ class TestGeocode:
 
         assert result["status"] == "empty"
 
-    async def test_geocode_empty_address(self, fake_redis):
+    async def test_geocode_empty_address(self):
         geo = GeoCoder(amap_key="test_key")
         result = await geo.geocode("")
         assert result["status"] == "empty"
 
-    async def test_geocode_writes_to_cache(self, fake_redis):
+    async def test_geocode_writes_to_cache(self):
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
             "status": "1",
@@ -148,12 +161,12 @@ class TestGeocode:
 
             await geo.geocode("南京")
 
-        keys = [k async for k in fake_redis.scan_iter("cache:geocode:*")]
+        keys = [k for k in geo_code._CACHE if k.startswith("cache:geocode:")]
         assert len(keys) == 1
 
 
 class TestReverseGeocode:
-    async def test_reverse_success(self, fake_redis):
+    async def test_reverse_success(self):
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
             "status": "1",
@@ -171,7 +184,7 @@ class TestReverseGeocode:
         assert result["status"] == "success"
         assert "南京" in result["formatted_address"]
 
-    async def test_reverse_timeout(self, fake_redis):
+    async def test_reverse_timeout(self):
         geo = GeoCoder(amap_key="test_key")
         import httpx
         with patch("app.tools.geo_code.httpx.AsyncClient") as mock_client_cls:
@@ -189,7 +202,7 @@ class TestReverseGeocode:
     # Sprint 1 增量：top-N candidates / disambiguated / principal_rank
     # --------------------------------------------------------
 
-    async def test_top_n_candidates(self, fake_redis):
+    async def test_top_n_candidates(self):
         """高德返回 3 个 geocodes → candidates 长度 == 3，rank 严格 0/1/2，主点距离为 0。"""
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
@@ -225,7 +238,7 @@ class TestReverseGeocode:
         # 主点 location 与 candidates[0].location 一致
         assert result["location"] == cands[0]["location"]
 
-    async def test_disambiguated_flag(self, fake_redis):
+    async def test_disambiguated_flag(self):
         """两条 location_type 都是 '其他'（基础置信度 0.6） → disambiguated=True。"""
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({
@@ -251,7 +264,7 @@ class TestReverseGeocode:
         assert result["disambiguated"] is True
         assert len(result["candidates"]) >= 2
 
-    async def test_principal_rank_persists(self, fake_redis):
+    async def test_principal_rank_persists(self):
         """principal_rank 参数让用户切换主点：第二次以 rank=1 调 → 主点变为 candidates[1]。"""
         geo = GeoCoder(amap_key="test_key")
         mock_resp = _mock_response({

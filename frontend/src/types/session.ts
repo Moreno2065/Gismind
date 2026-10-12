@@ -1,5 +1,5 @@
 // frontend/src/types/session.ts
-// Session API 契约类型 — 与 backend/app/api/sessions.py 对齐
+// Session API projections from the durable Runtime store.
 
 export interface SessionMeta {
   id: string;
@@ -12,19 +12,10 @@ export interface SessionMeta {
 }
 
 export interface SessionMessage {
+  id?: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
-  tool_call_id?: string;
-  tool_calls?: unknown[];
-  created_at?: string;       // iso
-  // 前端兼容字段（来自 ChatMessage 持久化）
-  blocks?: unknown[];
-  status?: 'thinking' | 'fetching' | 'summarizing' | 'done' | 'error';
-  thinkingTrace?: unknown[];
-  execution_trace?: unknown[];
-  executionTrace?: unknown[];
-  trace_id?: string;
-  error?: { code: string; message: string };
+  created_at?: string;
 }
 
 export interface CreateSessionResponse {

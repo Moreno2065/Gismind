@@ -8,7 +8,9 @@ import pytest
 def _run_sandboxed(code: str) -> tuple[int, str, str]:
     """Run code in a subprocess that loads sitecustomize_gismind."""
     import os
-    sandbox_dir = os.path.join(os.path.dirname(__file__), "..", "..", "app", "sandbox")
+    sandbox_dir = os.path.join(
+        os.path.dirname(__file__), "..", "..", "app", "runtime", "code_mode"
+    )
     sandbox_dir = os.path.normpath(os.path.abspath(sandbox_dir))
 
     env = os.environ.copy()
@@ -53,9 +55,8 @@ def test_numpy_import_allowed():
 
     Note: Sandbox subprocess uses `python -S` (no site-packages), so numpy may not
     be available unless the sandbox environment is explicitly configured with a
-    vendored numpy wheel. See golden_sandbox.json for the expected sandbox toolchain.
-    If numpy is needed in the sandbox, ensure it is installed in the PYTHONPATH
-    passed to the subprocess.
+    vendored numpy wheel. If numpy is needed in the sandbox, ensure it is
+    installed in the PYTHONPATH passed to the subprocess.
     """
     rc, out, err = _run_sandboxed("import numpy; print(numpy.__version__)")
     if rc != 0 and "No module named 'numpy'" in err:

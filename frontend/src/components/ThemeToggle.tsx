@@ -33,7 +33,7 @@ export function ThemeToggle({ theme, onChange }: ThemeToggleProps) {
 
   return (
     <div
-      className="flex select-none items-center gap-2 rounded-md border border-ink-700 bg-ink-900/60 p-1 backdrop-blur-md shadow-bubble"
+      className="flex shrink-0 select-none items-center gap-1 rounded-md border border-ink-700 bg-ink-900/60 p-1 shadow-bubble backdrop-blur-md sm:gap-2"
       role="radiogroup"
       aria-label="主题模式"
     >
@@ -71,11 +71,12 @@ function Segment({ active, label, hint, onClick, children }: SegmentProps) {
     <button
       type="button"
       role="radio"
+      aria-label={hint}
       aria-checked={active}
       onClick={onClick}
       title={`切换至 ${hint} 主题（键盘 t）`}
       className={cn(
-        'group relative flex items-center gap-1.5 rounded-sm px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] transition',
+        'group relative flex shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] transition motion-reduce:transition-none sm:px-2',
         active
           ? 'bg-amber/10 text-amber shadow-[0_0_0_1px_rgb(var(--c-amber)/0.45),0_0_10px_-2px_rgb(var(--c-amber)/0.5)]'
           : 'text-ink-400 hover:bg-ink-800/60 hover:text-ink-200',
@@ -84,9 +85,9 @@ function Segment({ active, label, hint, onClick, children }: SegmentProps) {
       <span className={cn('flex h-3.5 w-3.5 items-center justify-center', active && 'animate-theme-icon-in')}>
         {children}
       </span>
-      <span className="leading-none">{active ? label : hint}</span>
+      <span className="hidden leading-none sm:inline">{active ? label : hint}</span>
       {active && (
-        <span className="ml-0.5 inline-block h-1 w-1 rounded-full bg-amber shadow-glow" aria-hidden="true" />
+        <span className="ml-0.5 hidden h-1 w-1 rounded-full bg-amber shadow-glow sm:inline-block" aria-hidden="true" />
       )}
     </button>
   );

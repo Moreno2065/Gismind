@@ -3,7 +3,7 @@
 实现 WGS84 / GCJ02 / BD09 三套坐标系之间的数学偏转转换，以及
 坐标系自动识别、国内范围判断、haversine 距离计算等辅助函数。
 
-核心原则（参考 GIS_Agent_技术文档.md §4.2）：
+核心原则：显式区分 WGS84、GCJ02 与 EPSG CRS，所有转换由 Runtime handler 显式编排：
 1. GCJ02 没有标准 EPSG 编码，不能用 pyproj 做偏转，必须用数学算法
 2. 国外坐标不偏转（out_of_china 判断），高德海外底图自动切换为 WGS84
 3. 所有 pyproj 投影计算应在 WGS84/CGCS2000 上进行，不能直接用 GCJ02

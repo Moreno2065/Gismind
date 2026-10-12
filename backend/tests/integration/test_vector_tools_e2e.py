@@ -549,8 +549,8 @@ class TestDataIOVectorIntegration:
         assert data["features"][0]["geometry"]["coordinates"] == [118.7782, 32.0417]
         assert data["features"][0]["properties"]["name"] == "A"
 
-    def test_csv_to_points_coordinate_out_of_range_warning(self):
-        """坐标值越界产生 warning。"""
+    def test_csv_to_points_coordinate_out_of_range_rejects_entire_table(self):
+        """任意经纬度越界都会拒绝整张表，不输出部分成功点。"""
         import pandas as pd
 
         df = pd.DataFrame({
@@ -561,10 +561,11 @@ class TestDataIOVectorIntegration:
 
         dio = DataIO()
         result = dio.csv_to_points(df, x_field="lng", y_field="lat")
-        assert result["status"] == "success"
-        assert len(result.get("warnings", [])) > 0
-        any_range_warning = any("范围" in w for w in result["warnings"])
-        assert any_range_warning, f"Expected range warning, got: {result['warnings']}"
+        assert result["status"] == "error"
+        assert result["error_code"] == "COORDINATE_OUT_OF_RANGE"
+        assert result["invalid_row_positions"] == [1]
+        assert "COORDINATE_OUT_OF_RANGE" in result["message"]
+        assert "data" not in result
 
     def test_csv_to_points_missing_field_error(self):
         """缺失字段返回 error。"""

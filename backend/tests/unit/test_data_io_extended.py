@@ -139,6 +139,41 @@ class TestLoadCSV:
         finally:
             os.unlink(tmp_path)
 
+    def test_read_csv_preserves_literal_na_and_leading_zero_codes(self):
+        """地名 NA 和字符串编码 001 不能被类型推断静默改写。"""
+        csv_content = "region,code,lon,lat\nNA,001,116.4,39.9\n"
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(csv_content)
+            tmp_path = f.name
+
+        try:
+            result = DataIO().load_csv(tmp_path)
+            assert result["status"] == "success"
+            row = result["data"]["sample"][0]
+            assert row["region"] == "NA"
+            assert row["code"] == "001"
+            assert row["lon"] == 116.4
+            assert row["lat"] == 39.9
+        finally:
+            os.unlink(tmp_path)
+
+    @pytest.mark.parametrize("header", ["name,name", "name, "])
+    def test_read_csv_rejects_ambiguous_header(self, header):
+        """重复/空列名必须显式失败，不能让 Pandas 隐式改列。"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(f"{header}\na,b\n")
+            tmp_path = f.name
+
+        try:
+            result = DataIO().load_csv(tmp_path)
+            assert result["status"] == "error"
+        finally:
+            os.unlink(tmp_path)
+
     def test_read_csv_encoding_error(self):
         """编码不匹配返回 error。"""
         # 写一个 GBK 编码文件，但用 UTF-8 读取
@@ -215,32 +250,33 @@ class TestCsvToPoints:
         assert result["status"] == "error"
         assert "missing" in result["message"]
 
-    def test_coordinate_out_of_range(self):
-        """坐标值超出预期范围时产生 warning。"""
+    def test_coordinate_out_of_range_rejects_entire_table(self):
+        """经度或纬度越界均硬拒绝，不静默保留正常行生成部分输出。"""
         df = pd.DataFrame({
             "name": ["正常", "异常经度", "异常纬度"],
             "lon": [116.39, 200.0, 110.0],
             "lat": [39.91, 30.0, 100.0],
         })
         result = DataIO().csv_to_points(df, x_field="lon", y_field="lat")
-        assert result["status"] == "success"
-        warnings = result.get("warnings", [])
-        assert len(warnings) > 0
-        assert any("范围异常" in w for w in warnings)
+        assert result["status"] == "error"
+        assert result["error_code"] == "COORDINATE_OUT_OF_RANGE"
+        assert result["invalid_row_positions"] == [1, 2]
+        assert "COORDINATE_OUT_OF_RANGE" in result["message"]
+        assert "data" not in result
 
-    def test_swapped_coordinates_warning(self):
-        """x_field 含纬度名 / y_field 含经度名时产生 warning。"""
+    def test_swapped_coordinates_reject_out_of_range_latitudes(self):
+        """经纬列颠倒导致实际纬度超过九十度时拒绝，不自动交换或输出点。"""
         df = pd.DataFrame({
             "id": [1, 2],
             "latitude": [39.91, 31.23],
             "longitude": [116.39, 121.47],
         })
         result = DataIO().csv_to_points(df, x_field="latitude", y_field="longitude")
-        assert result["status"] == "success"
-        warnings = result.get("warnings", [])
-        # 坐标值在正常范围内，但语义上可能颠倒
-        # 本方法不做字段名判断，只做数值范围检查；语义判断在 preflight 规则中
-        assert len(result["data"]["features"]) == 2
+        assert result["status"] == "error"
+        assert result["error_code"] == "COORDINATE_OUT_OF_RANGE"
+        assert result["invalid_row_positions"] == [0, 1]
+        assert "COORDINATE_OUT_OF_RANGE" in result["message"]
+        assert "data" not in result
 
     def test_empty_input(self):
         """空输入返回 error。"""
@@ -337,6 +373,8 @@ class TestExportResult:
             result = DataIO().export_result(geojson_dict, out_path)
             assert result["status"] == "success"
             assert os.path.exists(out_path)
+            reloaded = gpd.read_file(out_path)
+            assert reloaded.crs.to_epsg() == 4326
 
     def test_export_empty_data(self):
         """空数据返回 error。"""

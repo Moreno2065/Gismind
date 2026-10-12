@@ -1,6 +1,6 @@
 """地图图层构建工具。
 
-实现参考 GIS_Agent_技术文档.md §4.6 + docs/02_data_models.md §4.1。
+Runtime MapLayer 序列化适配器，输出供 Artifact Store 与前端消费的稳定结构。
 
 核心设计：
 1. **后端只生成图层数据配置（JSON）**：不生成地图 HTML，前端高德 JS API 直接渲染
@@ -12,7 +12,7 @@
    （含孔洞），前端 AMap.GeoJSON 插件统一解析
 5. **ECharts 配置**：柱状图/折线图/饼图，返回标准 ECharts option 结构
 
-图层类型对照 docs/02_data_models.md §4.1 的 MapLayer union：
+图层类型对照 Runtime MapLayer union：
 - PointLayer / HeatmapLayer / PolygonLayer / PolylineLayer / FeatureCollectionLayer
 """
 
@@ -22,7 +22,7 @@ from typing import Any, Optional
 class MapLayerBuilder:
     """地图图层配置构建器。
 
-    所有方法返回符合 docs/02_data_models.md §4.1 MapLayer union 的 dict 配置。
+    所有方法返回符合 Runtime MapLayer union 的 dict 配置。
     前端拿到这些 JSON 配置后，直接调用高德 JS API 渲染，无需后端生成 HTML。
     """
 
@@ -62,7 +62,7 @@ class MapLayerBuilder:
             popup_fields: 点击 POI 弹窗展示的字段名列表
 
         Returns:
-            PointLayer 配置 dict（符合 docs/02_data_models.md §4.1）
+            PointLayer 配置 dict（符合 Runtime MapLayer union）
         """
         style = self._SOURCE_STYLES.get(
             source, self._SOURCE_STYLES["Upload"]

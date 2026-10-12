@@ -2,7 +2,7 @@
 
 覆盖维度：
 1. WGS84 <-> GCJ02 往返一致性（核心，偏差 < 1m）
-2. 黄金用例范围验证（5 个城市，偏差 < 200m）
+2. 参考用例范围验证（5 个城市，偏差 < 200m）
 3. 国外坐标不偏转（out_of_china 判断）
 4. is_china_bbox 边界判断
 5. GCJ02 <-> BD09 往返一致性
@@ -71,23 +71,21 @@ def test_gcj02_wgs84_gcj02_roundtrip(lng, lat):
 
 
 # ============================================================
-# 2. 黄金用例范围验证
+# 2. 参考用例范围验证
 # ============================================================
 
-def test_wgs84_to_gcj02_golden(golden_coords):
-    """对 golden_coords.json 的 5 个城市，wgs84_to_gcj02 结果与 json 偏差 < 500m。
+def test_wgs84_to_gcj02_reference_cases(transform_cases):
+    """对进程内参考坐标案例校验公开算法的偏转量级。
 
-    说明：golden_coords.json 的 gcj02 参考值由"高精度算法"生成（见 json 中
-    source 字段），而本实现采用任务要求的"标准公开算法"（a=6378245.0,
-    ee=0.00669342162296594323）。文档 GIS_Agent_技术文档.md §4.2 明确指出
-    "evil_transform 等公开近似算法在部分城市有偏差"。因此本测试仅做范围
-    验证（量级正确、在国内、非零偏转），不要求精确匹配。
+    本实现采用任务要求的标准公开算法（a=6378245.0,
+    ee=0.00669342162296594323），因此本测试只验证结果量级、国内范围和
+    非零偏转，不把外部服务或历史快照当成事实来源。
 
     真正的精度回归由 test_wgs84_gcj02_roundtrip / test_gcj02_wgs84_gcj02_roundtrip
     保证（往返偏差 < 1m，验证算法自洽性）。
     """
-    assert len(golden_coords) >= 5, "黄金用例至少 5 个"
-    for case in golden_coords:
+    assert len(transform_cases) >= 5, "参考用例至少 5 个"
+    for case in transform_cases:
         result = wgs84_to_gcj02(*case["wgs84"])
         expected = tuple(case["gcj02"])
         deviation = haversine_m(result, expected)
@@ -98,9 +96,9 @@ def test_wgs84_to_gcj02_golden(golden_coords):
         )
 
 
-def test_golden_cases_cover_expected_cities(golden_coords):
-    """确保黄金用例覆盖了 5 个预期城市"""
-    cities = {c["city"] for c in golden_coords}
+def test_reference_cases_cover_expected_cities(transform_cases):
+    """确保参考案例覆盖 5 个预期城市"""
+    cities = {c["city"] for c in transform_cases}
     expected = {"北京", "上海", "南京", "乌鲁木齐", "海口"}
     assert expected.issubset(cities), f"缺少城市: {expected - cities}"
 

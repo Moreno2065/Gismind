@@ -6,11 +6,10 @@
   "description": "Gismind — spatial intelligence GIS Agent chat UI",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/check-bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test",
-    "test:e2e:awaiting": "playwright test e2e/awaiting-input.spec.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",
@@ -21,14 +20,17 @@
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^20.19.43",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^26.1.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
   }
 }

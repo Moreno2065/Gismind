@@ -1,7 +1,6 @@
 // frontend/src/api/client.ts
-// API 调用封装 — chat(SSE) / upload / health
+// API 调用封装 — Runtime / artifacts / sessions / health
 
-import type { ChatRequest, UploadResponse } from '@/types/message';
 import type {
   CreateSessionResponse,
   SessionListResponse,
@@ -9,6 +8,15 @@ import type {
   SessionMessagesResponse,
   SessionMeta,
 } from '@/types/session';
+import type {
+  ArtifactSummary,
+  CreateRunRequest,
+  CreateRunResponse,
+  RunCommandResponse,
+  RunSnapshot,
+  PendingConfirmation,
+  SessionRun,
+} from '@/types/runtime';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 
@@ -56,103 +64,103 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return (await res.json()) as HealthResponse;
 }
 
-/** 文件上传 */
-export async function uploadFile(file: File, signal?: AbortSignal): Promise<UploadResponse> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch(`${BASE}/upload`, { method: 'POST', headers: authHeaders(), body: form, signal });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = (payload as { error?: { message?: string } }).error;
-    throw new Error(err?.message ?? `upload failed: HTTP ${res.status}`);
-  }
-  return payload as UploadResponse;
+export interface UploadDeclaration {
+  declared_crs?: Record<string, unknown>;
+  declared_bbox?: readonly [number, number, number, number];
 }
 
-/**
- * 发起对话 — SSE 流式接收。
- * 返回 Response；调用方用 useSSE 解析 body 流。
- */
-export function chatStream(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
-  return fetch(`${BASE}/chat`, {
+/** Upload directly to the durable Runtime CAS with only explicit user declarations. */
+export async function uploadRuntimeArtifact(file: File, signal?: AbortSignal, options?: UploadDeclaration): Promise<ArtifactSummary> {
+  const form = new FormData();
+  form.append('file', file);
+  if (options?.declared_crs) form.append('declared_crs', JSON.stringify(options.declared_crs));
+  if (options?.declared_bbox) form.append('declared_bbox', JSON.stringify(options.declared_bbox));
+  const res = await fetch(`${BASE}/artifacts/uploads`, { method: 'POST', headers: authHeaders(), body: form, signal });
+  if (!res.ok) await readError(res, 'runtime upload failed');
+  return (await res.json()) as ArtifactSummary;
+}
+
+/** Create a durable Runtime run. Retries are safe when client_request_id is stable. */
+export async function createRuntimeRun(req: CreateRunRequest, signal?: AbortSignal): Promise<CreateRunResponse> {
+  const res = await fetch(`${BASE}/runs`, {
     method: 'POST',
-    headers: authHeaders({
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    }),
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(req),
     signal,
   });
+  if (!res.ok) await readError(res, 'create run failed');
+  return (await res.json()) as CreateRunResponse;
 }
 
-export interface ResumeChatResponse {
-  status: 'resumed' | 'no_checkpoint' | 'mismatch' | 'not_found';
-  session_id: string;
-  sub_agent_run_id?: string;
-  expected_sub_agent_run_id?: string;
-  message?: string;
-  final_output?: unknown;
+/** Read the authoritative Runtime snapshot before (re)subscribing to events. */
+export async function getRuntimeRun(runId: string, signal?: AbortSignal): Promise<RunSnapshot> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(), signal });
+  if (!res.ok) await readError(res, 'get run failed');
+  return (await res.json()) as RunSnapshot;
 }
 
-/**
- * Session snapshot guard for in-flight resume.
- * Resume responses must only apply when the requesting session is still active
- * and the request was not aborted (e.g. user switched session mid-resume).
- */
-export function canApplyResumeResult(
-  requestSessionId: string,
-  activeSessionId: string,
-  signal?: AbortSignal,
-  responseSessionId?: string,
-): boolean {
-  if (signal?.aborted) return false;
-  if (!requestSessionId || requestSessionId !== activeSessionId) return false;
-  if (responseSessionId && responseSessionId !== requestSessionId) return false;
-  return true;
-}
-
-/**
- * Extract human-readable text from resume `final_output`.
- * Backend chat path uses `text` or `summary` (see chat.py token emission).
- */
-export function extractResumeFinalText(finalOutput: unknown): string | null {
-  if (finalOutput == null) return null;
-  if (typeof finalOutput === 'string') {
-    const t = finalOutput.trim();
-    return t.length > 0 ? t : null;
-  }
-  if (typeof finalOutput !== 'object') return null;
-  const rec = finalOutput as Record<string, unknown>;
-  for (const key of ['text', 'summary'] as const) {
-    const v = rec[key];
-    if (typeof v === 'string' && v.trim().length > 0) return v;
-  }
-  return null;
-}
-
-/** Build assistant text blocks from resume final_output (empty when no displayable text). */
-export function textBlocksFromResumeFinalOutput(
-  finalOutput: unknown,
-): Array<{ type: 'text'; content: string }> {
-  const text = extractResumeFinalText(finalOutput);
-  return text ? [{ type: 'text' as const, content: text }] : [];
-}
-
-/** 提交等待中的用户回答，并恢复对应 session。 */
-export async function resumeChat(
-  sessionId: string,
-  subAgentRunId: string,
-  answer: string,
-  signal?: AbortSignal,
-): Promise<ResumeChatResponse> {
-  const res = await fetch(`${BASE}/chat/${encodeURIComponent(sessionId)}/resume`, {
-    method: 'POST',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ sub_agent_run_id: subAgentRunId, answer }),
+/** Open a replayable event stream. The cursor is sent as Last-Event-ID. */
+export async function runtimeEventsStream(runId: string, lastEventId = 0, signal?: AbortSignal): Promise<Response> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/events`, {
+    headers: authHeaders({ Accept: 'text/event-stream', ...(lastEventId > 0 ? { 'Last-Event-ID': String(lastEventId) } : {}) }),
     signal,
   });
-  if (!res.ok) await readError(res, 'resume chat failed');
-  return (await res.json()) as ResumeChatResponse;
+  if (!res.ok) await readError(res, 'runtime event stream failed');
+  return res;
+}
+
+export async function cancelRuntimeRun(runId: string, commandId: string, expectedRunVersion: number, signal?: AbortSignal): Promise<RunCommandResponse> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ command_id: commandId, expected_run_version: expectedRunVersion }),
+    signal,
+  });
+  if (!res.ok) await readError(res, 'cancel run failed');
+  return (await res.json()) as RunCommandResponse;
+}
+
+export async function resumeRuntimeRun(runId: string, commandId: string, patch: Record<string, unknown>, expectedRunVersion: number, signal?: AbortSignal): Promise<RunCommandResponse> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/resume`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ command_id: commandId, patch, expected_run_version: expectedRunVersion, action: 'resume' }),
+    signal,
+  });
+  if (!res.ok) await readError(res, 'resume run failed');
+  return (await res.json()) as RunCommandResponse;
+}
+
+export async function confirmRuntimeRun(runId: string, commandId: string, confirmation: PendingConfirmation, expectedRunVersion: number, signal?: AbortSignal): Promise<RunCommandResponse> {
+  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/confirm`, {
+    method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), signal,
+    body: JSON.stringify({ command_id: commandId, expected_run_version: expectedRunVersion, task_id: confirmation.task_id, action_hash: confirmation.action_hash, confirmation: true }),
+  });
+  if (!res.ok) await readError(res, 'confirm run failed');
+  return (await res.json()) as RunCommandResponse;
+}
+
+export async function getSessionRuns(sessionId: string, signal?: AbortSignal): Promise<SessionRun[]> {
+  const res = await fetch(`${BASE}/sessions/${encodeURIComponent(sessionId)}/runs`, { headers: authHeaders(), signal });
+  if (!res.ok) await readError(res, 'get session runs failed');
+  return ((await res.json()) as { items: SessionRun[] }).items;
+}
+
+export async function getRuntimeArtifact(artifactId: string, signal?: AbortSignal): Promise<ArtifactSummary> {
+  const res = await fetch(`${BASE}/artifacts/${encodeURIComponent(artifactId)}`, { headers: authHeaders(), signal });
+  if (!res.ok) await readError(res, 'get artifact failed');
+  return (await res.json()) as ArtifactSummary;
+}
+
+/** Content URL is generated by the server; storage_uri never crosses this boundary. */
+export function runtimeArtifactContentUrl(artifact: Pick<ArtifactSummary, 'artifact_id'>): string {
+  return `${BASE}/artifacts/${encodeURIComponent(artifact.artifact_id)}/content`;
+}
+
+export async function getRuntimeArtifactContent(artifactId: string, signal?: AbortSignal): Promise<unknown> {
+  const res = await fetch(runtimeArtifactContentUrl({ artifact_id: artifactId }), { headers: authHeaders(), signal });
+  if (!res.ok) await readError(res, 'get artifact content failed');
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -188,14 +196,20 @@ export function clearActiveSessionId(): void {
   }
 }
 
-/** 解析错误响应 envelope，未知错误给出兜底文案。 */
+export class RuntimeApiError extends Error {
+  constructor(public readonly code: string, public readonly status: number, message: string) {
+    super(`${code}: ${message}`);
+    this.name = 'RuntimeApiError';
+  }
+}
+
+/** 解析错误响应 envelope，保留可恢复的协议错误代码。 */
 async function readError(res: Response, fallback: string): Promise<never> {
   const payload = await res.json().catch(() => ({}));
   const err = (payload as { error?: { message?: string } }).error;
   const msg = err?.message ?? `HTTP ${res.status}`;
-  if (res.status === 404) {
-    throw new Error(`SESSION_NOT_FOUND: ${msg}`);
-  }
+  const code = (err as { code?: string } | undefined)?.code;
+  if (code) throw new RuntimeApiError(code, res.status, msg);
   throw new Error(`${fallback}: ${msg}`);
 }
 
@@ -251,51 +265,6 @@ export async function deleteSession(id: string, signal?: AbortSignal): Promise<v
 }
 
 // ---------------------------------------------------------------------------
-// Run Control API — 暂停 / 取消 / 恢复 / 查询
+// Legacy Run Control API has been removed. Runtime commands above are versioned
+// and persisted by the authoritative run ledger.
 // ---------------------------------------------------------------------------
-
-export interface RunStatusResponse {
-  run_id: string;
-  status: 'pending' | 'running' | 'paused' | 'cancelled' | 'completed' | 'failed';
-  created_at: number;
-  updated_at: number;
-}
-
-/** 取消正在执行的 run。 */
-export async function cancelRun(runId: string, signal?: AbortSignal): Promise<{ status: string; run_id: string }> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/cancel`, {
-    method: 'POST',
-    headers: authHeaders(),
-    signal,
-  });
-  return (await res.json()) as { status: string; run_id: string };
-}
-
-/** 暂停正在执行的 run。 */
-export async function pauseRun(runId: string, signal?: AbortSignal): Promise<{ status: string; run_id: string }> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/pause`, {
-    method: 'POST',
-    headers: authHeaders(),
-    signal,
-  });
-  return (await res.json()) as { status: string; run_id: string };
-}
-
-/** 恢复已暂停的 run。 */
-export async function resumeRun(runId: string, signal?: AbortSignal): Promise<{ status: string; run_id: string }> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}/resume`, {
-    method: 'POST',
-    headers: authHeaders(),
-    signal,
-  });
-  return (await res.json()) as { status: string; run_id: string };
-}
-
-/** 查询 run 状态。 */
-export async function getRunStatus(runId: string, signal?: AbortSignal): Promise<RunStatusResponse> {
-  const res = await fetch(`${BASE}/runs/${encodeURIComponent(runId)}`, {
-    headers: authHeaders(),
-    signal,
-  });
-  return (await res.json()) as RunStatusResponse;
-}

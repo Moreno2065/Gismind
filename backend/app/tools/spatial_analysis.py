@@ -1,8 +1,8 @@
 """空间分析引擎。
 
-实现参考 GIS_Agent_技术文档.md §4.4 + docs/02_data_models.md §3.2。
+Runtime 确定性矢量分析适配器，供 `app.runtime` ToolContract handler 使用。
 
-核心设计原则（与 docs/02_data_models.md §7 一致）：
+核心设计原则：
 1. **GCJ02 不能直接进 pyproj**：无标准 EPSG，pyproj 会把 GCJ02 当 WGS84 处理导致整体偏移。
    所有 GCJ02 输入必须先用 `geo_transform.gcj02_to_wgs84`（数学偏转）转 WGS84，再投影计算。
 2. **空间计算在投影坐标系下进行**：通过 `_resolve_projected_crs` 动态选择投影坐标系
@@ -989,6 +989,11 @@ class SpatialAnalyzer:
             wgs84_gdf = self._ensure_wgs84(gdf)
             proj_gdf = wgs84_gdf.to_crs(epsg=_resolve_projected_crs(wgs84_gdf))
             dissolved = proj_gdf.dissolve(by=by)
+            # GeoPandas stores the dissolve key in the index.  Runtime
+            # Artifacts serialize to GeoJSON, where an index is not a feature
+            # property; restore it so grouping remains observable downstream.
+            if by is not None:
+                dissolved = dissolved.reset_index()
             wgs84_result = dissolved.to_crs(epsg=_WGS84_EPSG)
             result = self._to_gcj02_output(wgs84_result)
             return {"status": "success", "data": result}
@@ -1079,26 +1084,72 @@ class SpatialAnalyzer:
             proj_b = wgs84_b.to_crs(epsg=epsg)
             if max_distance is not None and max_distance < 0:
                 raise ValueError("max_distance must be greater than or equal to 0")
+            if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+                raise ValueError("k must be a positive integer")
             if max_distance == 0:
                 # Shapely's nearest query rejects zero, but it is a meaningful
                 # user constraint: only geometries that touch/intersect have a
                 # distance of exactly zero.  A spatial inner join implements
                 # that closed boundary without silently widening the radius.
-                joined = gpd.sjoin(proj_a, proj_b, how="inner", predicate="intersects")
-                joined["distance_m"] = 0.0
-            else:
+                if k == 1:
+                    joined = gpd.sjoin(proj_a, proj_b, how="inner", predicate="intersects")
+                    joined["distance_m"] = 0.0
+                else:
+                    joined = self._nearest_pairs(proj_a, proj_b, max_distance=0.0, k=k)
+            elif k == 1:
                 kwargs = {}
                 if max_distance is not None:
                     kwargs["max_distance"] = max_distance
                 joined = gpd.sjoin_nearest(
                     proj_a, proj_b, how="inner", distance_col="distance_m", **kwargs,
                 )
+            else:
+                # GeoPandas' sjoin_nearest intentionally returns only the
+                # closest match (plus ties), so it cannot honor the public
+                # ``k`` contract for k>1.  Build the bounded top-k relation
+                # explicitly in the projected CRS and keep stable source
+                # ordering for equal distances.
+                joined = self._nearest_pairs(proj_a, proj_b, max_distance=max_distance, k=k)
             wgs84_result = joined.to_crs(epsg=_WGS84_EPSG)
             result = self._to_gcj02_output(wgs84_result)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("join_by_nearest 计算失败")
             return {"status": "error", "message": f"最近邻连接失败: {str(e)}"}
+
+    @staticmethod
+    def _nearest_pairs(proj_a: gpd.GeoDataFrame, proj_b: gpd.GeoDataFrame, *, max_distance: Optional[float], k: int) -> gpd.GeoDataFrame:
+        """Return at most k nearest B rows for every A row in projected CRS."""
+        a_columns = [column for column in proj_a.columns if column != "geometry"]
+        b_columns = [column for column in proj_b.columns if column != "geometry"]
+        rows: list[dict] = []
+        for _, a_row in proj_a.iterrows():
+            candidates = []
+            for b_index, b_row in proj_b.iterrows():
+                distance = float(a_row.geometry.distance(b_row.geometry))
+                if max_distance is not None and distance > max_distance:
+                    continue
+                candidates.append((distance, str(b_index), b_row))
+            candidates.sort(key=lambda item: (item[0], item[1]))
+            for distance, _stable_index, b_row in candidates[:k]:
+                record = {column: a_row[column] for column in a_columns}
+                for column in b_columns:
+                    target = column if column not in record else f"{column}_right"
+                    record[target] = b_row[column]
+                record["distance_m"] = distance
+                record["geometry"] = a_row.geometry
+                rows.append(record)
+        if not rows:
+            # GeoPandas cannot infer a geometry column from an empty list.
+            # Preserve the declared output schema so a legitimate
+            # max-distance miss becomes an empty Vector Artifact rather than
+            # an adapter exception.
+            columns = [*a_columns]
+            for column in b_columns:
+                columns.append(column if column not in columns else f"{column}_right")
+            columns.extend(["distance_m", "geometry"])
+            return gpd.GeoDataFrame({column: [] for column in columns}, geometry="geometry", crs=proj_a.crs)
+        return gpd.GeoDataFrame(rows, geometry="geometry", crs=proj_a.crs)
 
     def count_points_in_polygon(
         self,
@@ -1147,7 +1198,21 @@ class SpatialAnalyzer:
         """
         try:
             wgs84_gdf = self._ensure_wgs84(gdf)
-            centroids = wgs84_gdf.centroid
+            if wgs84_gdf.empty:
+                centroids = wgs84_gdf.geometry
+            else:
+                projected_crs = wgs84_gdf.estimate_utm_crs()
+                if projected_crs is None:
+                    raise ValueError("无法为质心计算确定局部投影坐标系")
+                # Centroid is a metric planar operation. Computing it on
+                # longitude/latitude degrees emits a warning and can shift
+                # asymmetric or wide geometries; use a local projected CRS
+                # and transform only the resulting points back to WGS84.
+                centroids = (
+                    wgs84_gdf.to_crs(projected_crs)
+                    .centroid
+                    .to_crs(wgs84_gdf.crs)
+                )
             result_gdf = gpd.GeoDataFrame(
                 {
                     **{c: wgs84_gdf[c].values for c in wgs84_gdf.columns if c != "geometry"},
@@ -1390,7 +1455,7 @@ class SpatialAnalyzer:
                 return {"status": "error", "message": f"字段 {field} 不存在"}
 
             col = wgs84_gdf[field]
-            if operator == "==":
+            if operator in {"=", "=="}:
                 mask = col == value
             elif operator == "!=":
                 mask = col != value
@@ -1404,6 +1469,10 @@ class SpatialAnalyzer:
                 mask = col <= value
             elif operator == "contains":
                 mask = col.astype(str).str.contains(str(value), na=False)
+            elif operator == "in":
+                if not isinstance(value, (list, tuple, set, frozenset)):
+                    return {"status": "error", "message": "in 运算符要求 value 为数组"}
+                mask = col.isin(list(value))
             elif operator == "is_null":
                 mask = col.isnull()
             else:

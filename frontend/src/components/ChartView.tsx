@@ -3,8 +3,42 @@
 // 主题化（dark / light 各一套调色板），resize 响应。
 
 import { useEffect, useRef } from 'react';
-import * as echarts from 'echarts';
+import * as echarts from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
 import { useTheme } from '@/hooks/useTheme';
+
+let chartModulesReady: Promise<void> | null = null;
+
+// Register the complete chart set when the first chart is requested. ECharts'
+// full entry registers these modules eagerly on every page load.
+export function prepareCharts(): Promise<void> {
+  if (!chartModulesReady) {
+    chartModulesReady = Promise.all([
+      import('echarts/charts'),
+      import('echarts/components'),
+      import('echarts/features'),
+    ]).then(([charts, components, features]) => {
+      // The full entry uses these composite installers in place of their
+      // narrower alternatives, so keep the same registration set.
+      const redundantComponents = new Set([
+        'GridSimpleComponent',
+        'LegendPlainComponent',
+        'LegendScrollComponent',
+        'RadarComponent',
+      ]);
+      const componentInstallers = Object.entries(components)
+        .filter(([name]) => !redundantComponents.has(name))
+        .map(([, install]) => install);
+      echarts.use([
+        ...Object.values(charts),
+        ...componentInstallers,
+        ...Object.values(features),
+        CanvasRenderer,
+      ]);
+    });
+  }
+  return chartModulesReady;
+}
 
 interface ChartViewProps {
   config: Record<string, unknown>;

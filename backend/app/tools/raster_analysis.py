@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import io
 import logging
 import tempfile
@@ -167,13 +168,15 @@ class RasterAnalyzer:
             return rgb
         else:
             try:
-                import matplotlib.cm as cm
-                # matplotlib >=3.9 移除 cm.get_cmap，改用 colormaps 或 plt.get_cmap
+                # Prefer the non-deprecated registry API.  Older Matplotlib
+                # releases do not expose ``matplotlib.colormaps`` and retain
+                # the guarded compatibility fallback.
                 try:
+                    from matplotlib import colormaps
+                    cmap = colormaps.get_cmap(cmap_name)
+                except (ImportError, AttributeError):
+                    import matplotlib.cm as cm
                     cmap = cm.get_cmap(cmap_name)
-                except AttributeError:
-                    import matplotlib.pyplot as plt
-                    cmap = plt.get_cmap(cmap_name)
                 norm = (arr - np.nanmin(arr)) / (np.nanmax(arr) - np.nanmin(arr) + 1e-10)
                 norm = np.clip(norm, 0, 1)
                 rgba = cmap(norm)  # (H, W, 4)
@@ -612,11 +615,21 @@ class RasterAnalyzer:
             # 读取所有栅格
             arrays: dict[str, np.ndarray] = {}
             profile = None
+            invalid = None
             for name, path in rasters.items():
                 with rasterio.open(path) as src:
-                    arr = src.read(1)
+                    masked = src.read(1, masked=True)
+                    arr = np.asarray(masked.data, dtype=np.float64)
+                    mask = np.ma.getmaskarray(masked) | ~np.isfinite(arr)
                     if profile is None:
                         profile = src.profile.copy()
+                        invalid = mask
+                    else:
+                        if (src.shape != (profile["height"], profile["width"])
+                                or src.crs != profile["crs"] or src.transform != profile["transform"]):
+                            raise ValueError("RASTER_GRID_MISMATCH: inputs must share shape, CRS and transform")
+                        invalid |= mask
+                    arr[mask] = np.nan
                 arrays[name] = arr
 
             if profile is None:
@@ -624,6 +637,17 @@ class RasterAnalyzer:
 
             # 安全 eval：只允许 numpy 函数 + 基本运算
             result = self._safe_eval(expression, arrays)
+            if result.shape != (profile["height"], profile["width"]):
+                raise ValueError("RASTER_EXPRESSION_INVALID: output must retain input grid shape")
+            invalid |= ~np.isfinite(result)
+            nodata = profile.get("nodata")
+            if (nodata is None or not np.isfinite(nodata)
+                    or abs(nodata) > float(np.finfo(np.float32).max)
+                    or np.any(result[~invalid] == np.float32(nodata))):
+                nodata = float("nan")
+            else:
+                nodata = float(np.float32(nodata))
+            result[invalid] = nodata
 
             if dst_path is None:
                 tmp = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
@@ -636,6 +660,7 @@ class RasterAnalyzer:
                 "width": result.shape[1],
                 "dtype": result.dtype,
                 "count": 1,
+                "nodata": nodata,
             })
             out_t = profile["transform"]
             with rasterio.open(dst_path, "w", **out_profile) as dst:
@@ -661,20 +686,94 @@ class RasterAnalyzer:
 
         仅允许 numpy 模块函数 + 基本四则运算 + 幂运算 + 比较运算。
         """
-        safe_builtins = {
-            "abs": abs,
-            "min": min,
-            "max": max,
-            "True": True,
-            "False": False,
-        }
-        safe_globals = {"__builtins__": safe_builtins, "np": np}
-        safe_locals = dict(arrays)
+        # Interpret a small numeric grammar. Exposing the numpy module to
+        # Python eval also exposes file loaders and object traversal.
+        functions = {name: getattr(np, name) for name in (
+            "abs", "sqrt", "log", "log10", "exp", "sin", "cos", "tan",
+            "arcsin", "arccos", "arctan", "minimum", "maximum", "clip",
+            "where", "isnan", "isfinite", "floor", "ceil", "round",
+        )}
+        functions.update(min=np.minimum, max=np.maximum)
+        arities = {name: {1} for name in functions}
+        arities.update(minimum={2}, maximum={2}, min={2}, max={2}, clip={3}, where={3}, round={1, 2})
+        binary = {ast.Add: np.add, ast.Sub: np.subtract, ast.Mult: np.multiply,
+                  ast.Div: np.divide, ast.FloorDiv: np.floor_divide, ast.Mod: np.mod,
+                  ast.BitAnd: np.logical_and, ast.BitOr: np.logical_or}
+        comparisons = {ast.Eq: np.equal, ast.NotEq: np.not_equal, ast.Lt: np.less,
+                       ast.LtE: np.less_equal, ast.Gt: np.greater, ast.GtE: np.greater_equal}
+
+        def reject():
+            raise ValueError("RASTER_EXPRESSION_INVALID: unsupported numeric expression")
+
+        def evaluate(node):
+            if isinstance(node, ast.Constant):
+                if not isinstance(node.value, (int, float, bool)) or not np.isfinite(float(node.value)):
+                    reject()
+                return node.value if abs(node.value) <= 1e12 else float(node.value)
+            if isinstance(node, ast.Name):
+                if node.id not in arrays:
+                    reject()
+                return arrays[node.id]
+            if isinstance(node, ast.BinOp):
+                left, right = evaluate(node.left), evaluate(node.right)
+                if isinstance(node.op, ast.Pow):
+                    if np.any(np.abs(right) > 32):
+                        reject()
+                    return np.power(left, right)
+                if type(node.op) not in binary:
+                    reject()
+                return binary[type(node.op)](left, right)
+            if isinstance(node, ast.UnaryOp):
+                value = evaluate(node.operand)
+                if isinstance(node.op, ast.UAdd):
+                    return value
+                if isinstance(node.op, ast.USub):
+                    return np.negative(value)
+                if isinstance(node.op, (ast.Not, ast.Invert)):
+                    return np.logical_not(value)
+                reject()
+            if isinstance(node, ast.Compare):
+                value, left = True, evaluate(node.left)
+                for op, comparator in zip(node.ops, node.comparators):
+                    if type(op) not in comparisons:
+                        reject()
+                    right = evaluate(comparator)
+                    value = np.logical_and(value, comparisons[type(op)](left, right))
+                    left = right
+                return value
+            if isinstance(node, ast.BoolOp):
+                fn = np.logical_and if isinstance(node.op, ast.And) else np.logical_or
+                values = [evaluate(child) for child in node.values]
+                result = values[0]
+                for value in values[1:]:
+                    result = fn(result, value)
+                return result
+            if isinstance(node, ast.Call):
+                name = node.func.id if isinstance(node.func, ast.Name) else None
+                if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "np"):
+                    name = node.func.attr
+                if name not in functions or node.keywords or len(node.args) not in arities[name]:
+                    reject()
+                arguments = [evaluate(arg) for arg in node.args]
+                if name == "round" and len(arguments) == 2:
+                    if (isinstance(arguments[1], bool) or not isinstance(arguments[1], (int, np.integer))
+                            or not -15 <= arguments[1] <= 15):
+                        reject()
+                return functions[name](*arguments)
+            reject()
+
         try:
-            result = eval(expression, safe_globals, safe_locals)
-            return np.asarray(result, dtype=np.float32)
+            if not isinstance(expression, str) or len(expression) > 4096:
+                reject()
+            tree = ast.parse(expression, mode="eval")
+            if sum(1 for _ in ast.walk(tree)) > 256:
+                reject()
+            with np.errstate(all="ignore"):
+                result = evaluate(tree.body)
+            return np.array(result, dtype=np.float32, copy=True)
         except Exception as e:
-            raise ValueError(f"表达式求值失败: {expression} — {e}") from e
+            raise ValueError(f"RASTER_EXPRESSION_INVALID: {e}") from e
 
     # ------------------------------------------------------------------
     # 分区统计
@@ -803,11 +902,12 @@ class RasterAnalyzer:
                         # 确保 CRS 一致
                         x, y = geom.x, geom.y
                         row_idx, col_idx = src.index(x, y)
-                        value = src.read(1, window=((row_idx, row_idx + 1), (col_idx, col_idx + 1)))
+                        value = src.read(1, window=((row_idx, row_idx + 1), (col_idx, col_idx + 1)), masked=True)
+                        sample = value[0, 0] if value.size else None
                         results.append({
                             "x": x,
                             "y": y,
-                            "value": float(value[0, 0]) if value.size > 0 else None,
+                            "value": float(sample) if sample is not None and not np.ma.is_masked(sample) and np.isfinite(sample) else None,
                         })
                     except Exception:
                         results.append({"x": geom.x, "y": geom.y, "value": None})
@@ -905,7 +1005,7 @@ class RasterAnalyzer:
 
             with rasterio.open(raster_path) as src:
                 arr = src.read(band)
-                mask_arr = arr != src.nodata if src.nodata is not None else None
+                mask_arr = (src.read_masks(band) > 0) & np.isfinite(arr)
                 results = rio_shapes(arr, mask=mask_arr, transform=src.transform)
 
                 geoms = []
@@ -1291,6 +1391,11 @@ class RasterAnalyzer:
                 cmap_name="terrain",
                 value_kind="tri",
             )
+            # Runtime Raster Artifacts must retain the physical GeoTIFF, not
+            # the UI-only PNG preview dictionary.  Keep the derived bytes
+            # readable by Rasterio for downstream tasks and validation.
+            dst_path = self._to_tempfile(result.astype(np.float32), profile)
+            raster_layer["dst_path"] = dst_path
             return {"status": "success", "data": raster_layer}
         except Exception as e:
             logger.exception("terrain_ruggedness_index 失败: %s", e)
@@ -1327,6 +1432,8 @@ class RasterAnalyzer:
                 cmap_name="terrain",
                 value_kind="tpi",
             )
+            dst_path = self._to_tempfile(result.astype(np.float32), profile)
+            raster_layer["dst_path"] = dst_path
             return {"status": "success", "data": raster_layer}
         except Exception as e:
             logger.exception("topographic_position_index 失败: %s", e)
@@ -1358,6 +1465,8 @@ class RasterAnalyzer:
                 cmap_name="terrain",
                 value_kind="roughness",
             )
+            dst_path = self._to_tempfile(result.astype(np.float32), profile)
+            raster_layer["dst_path"] = dst_path
             return {"status": "success", "data": raster_layer}
         except Exception as e:
             logger.exception("roughness 失败: %s", e)

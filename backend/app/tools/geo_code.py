@@ -1,7 +1,8 @@
-"""地理编码工具：地名↔坐标，带 Redis 缓存。
+"""地理编码工具：地名↔坐标，使用可丢弃的进程内缓存。
 
-参考 docs/02_data_models.md §5（cache:geocode:{hash}）+ 原文档 §3.1 功能 4。
-高德地理编码 API 返回 GCJ02 坐标，无需转换。
+Runtime 的长期事实由 SQLite/CAS 管理；这里的缓存只降低同一进程内
+重复外部请求的开销，进程重启即可丢弃。高德地理编码 API 返回 GCJ02
+坐标，无需把它伪装成 EPSG CRS。
 
 Sprint 1 增量（坐标系原点漂移修复）：
 - 返回值增加 candidates / confidence / disambiguated 三个字段，让上层 Agent
@@ -19,8 +20,9 @@ from typing import Optional
 import httpx
 
 from app.config import settings
-from app.utils.redis import get_redis, make_key
 from app.tools.geo_transform import haversine_m, wgs84_to_gcj02
+
+_CACHE: dict[str, str] = {}
 
 GEOCODE_ENDPOINT = "https://restapi.amap.com/v3/geocode/geo"
 REVERSE_ENDPOINT = "https://restapi.amap.com/v3/geocode/regeo"
@@ -54,7 +56,9 @@ def _location_type_conf(t: str) -> float:
 
 
 def _cache_key(text: str) -> str:
-    return make_key("cache:geocode", hashlib.md5(text.encode("utf-8")).hexdigest())
+    # Runtime uses process-local cache; it is intentionally not a persistence
+    # or cross-process coordination mechanism.
+    return f"cache:geocode:{hashlib.md5(text.encode('utf-8')).hexdigest()}"
 
 
 def _normalize_geocode_entry(g: dict, rank: int, principal_loc: tuple) -> dict:
@@ -96,14 +100,14 @@ def _should_disambiguate(candidates: list[dict]) -> bool:
 
 
 class GeoCoder:
-    """地理编码，高德 API + Redis 缓存。"""
+    """地理编码，高德 API + 可丢弃的进程内缓存。"""
 
     def __init__(self, amap_key: Optional[str] = None, timeout: int = 3):
         self.amap_key = amap_key or settings.AMAP_KEY
         self.timeout = timeout
 
     async def geocode(self, address: str, principal_rank: int = 0, top_n: int = DEFAULT_TOP_N) -> dict:
-        """地名 → GCJ02 坐标。先查 Redis，再打高德。
+        """地名 → GCJ02 坐标。先查进程内缓存，再请求高德/OSM。
 
         Args:
             address: 用户输入的地址 / 地名。
@@ -116,7 +120,7 @@ class GeoCoder:
               "status": "success" | "empty",
               "location": [lng, lat],        # 主坐标，向后兼容
               "formatted_address": str,
-              "source": "Amap" | "Redis",
+              "source": "Amap" | "OSM" | "cache",
               "candidates": [                 # 新增：top-N 候选
                 {"rank": 0, "location": [...], "formatted_address": "...",
                  "location_type": "...", "distance_to_principal": 0},
@@ -130,9 +134,8 @@ class GeoCoder:
         if not address or not address.strip():
             return {"status": "empty", "message": "地址为空"}
 
-        r = get_redis()
         key = _cache_key(address)
-        cached = await r.get(key)
+        cached = _CACHE.get(key)
         if cached:
             try:
                 data = json.loads(cached)
@@ -145,7 +148,7 @@ class GeoCoder:
                 cand = data["candidates"][principal_rank]
                 data["location"] = cand["location"]
                 data["formatted_address"] = cand["formatted_address"]
-                data["source"] = "Redis"
+                data["source"] = "cache"
                 data["cached"] = True
                 data["principal_rank"] = principal_rank
                 # 重新算 confidence / disambiguated
@@ -176,8 +179,7 @@ class GeoCoder:
             # 其他服务端返回非成功状态 → OSM Nominatim 兜底
             fallback = await self._fallback_nominatim(address)
             if fallback:
-                await r.set(key, json.dumps(fallback, ensure_ascii=False),
-                            ex=settings.CACHE_TTL_GEOCODE)
+                _CACHE[key] = json.dumps(fallback, ensure_ascii=False)
                 return fallback
             return {"status": "empty", "message": f"未找到 {address} 的坐标"}
 
@@ -185,8 +187,7 @@ class GeoCoder:
             # 空结果（高德无匹配）→ OSM Nominatim 兜底
             fallback = await self._fallback_nominatim(address)
             if fallback:
-                await r.set(key, json.dumps(fallback, ensure_ascii=False),
-                            ex=settings.CACHE_TTL_GEOCODE)
+                _CACHE[key] = json.dumps(fallback, ensure_ascii=False)
                 return fallback
             return {"status": "empty", "message": f"未找到 {address} 的坐标"}
 
@@ -214,8 +215,7 @@ class GeoCoder:
         }
 
         # 缓存用 schema v1（含 candidates），并行加 principal_rank 字段
-        await r.set(key, json.dumps(result, ensure_ascii=False),
-                    ex=settings.CACHE_TTL_GEOCODE)
+        _CACHE[key] = json.dumps(result, ensure_ascii=False)
         return result
 
     async def _fallback_nominatim(self, address: str) -> dict | None:
@@ -288,9 +288,8 @@ class GeoCoder:
         """坐标 → 地址。location 是 GCJ02 (lng, lat)。"""
         lng, lat = location
         key_str = f"rev:{lng:.6f},{lat:.6f}"
-        r = get_redis()
         key = _cache_key(key_str)
-        cached = await r.get(key)
+        cached = _CACHE.get(key)
         if cached:
             try:
                 return json.loads(cached)
@@ -318,6 +317,5 @@ class GeoCoder:
             "source": "Amap",
             "cached": False,
         }
-        await r.set(key, json.dumps(result, ensure_ascii=False),
-                    ex=settings.CACHE_TTL_GEOCODE)
+        _CACHE[key] = json.dumps(result, ensure_ascii=False)
         return result

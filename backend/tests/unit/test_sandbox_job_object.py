@@ -1,4 +1,4 @@
-"""Windows Job Object resource limits for app.sandbox.runner.
+"""Windows Job Object resource limits for app.runtime.code_mode.runner.
 
 Covers:
 - ExtendedLimitInformation construction (ProcessMemoryLimit is top-level)
@@ -34,7 +34,7 @@ def test_build_extended_limit_info_places_process_memory_at_top_level():
     Nesting it under BasicLimitInformation causes:
     TypeError: JOBOBJECT_BASIC_LIMIT_INFORMATION() takes at most 9 keyword arguments (10 given)
     """
-    from app.sandbox.runner import _build_extended_limit_info
+    from app.runtime.code_mode.runner import _build_extended_limit_info
 
     memory_mb = 64
     info = _build_extended_limit_info(win32job, memory_mb)
@@ -50,7 +50,7 @@ def test_build_extended_limit_info_places_process_memory_at_top_level():
 
 def test_set_extended_limit_information_does_not_typeerror():
     """SetInformationJobObject with our built info must succeed (no TypeError)."""
-    from app.sandbox.runner import _build_extended_limit_info
+    from app.runtime.code_mode.runner import _build_extended_limit_info
 
     job = win32job.CreateJobObject(None, "")
     try:
@@ -77,7 +77,7 @@ def test_set_extended_limit_information_does_not_typeerror():
 
 def test_apply_job_object_keeps_handle_alive_on_proc():
     """job handle must be stored on the Popen so KILL_ON_JOB_CLOSE stays valid."""
-    from app.sandbox.runner import _apply_job_object
+    from app.runtime.code_mode.runner import _apply_job_object
 
     proc = _spawn_sleep_proc()
     try:
@@ -120,11 +120,11 @@ def test_apply_job_object_does_not_swallow_typeerror_silently(caplog):
     """
     import logging
 
-    from app.sandbox.runner import _apply_job_object
+    from app.runtime.code_mode.runner import _apply_job_object
 
     proc = _spawn_sleep_proc()
     try:
-        with caplog.at_level(logging.ERROR, logger="app.sandbox.runner"):
+        with caplog.at_level(logging.ERROR, logger="app.runtime.code_mode.runner"):
             _apply_job_object(proc, 64)
         joined = "\n".join(r.message for r in caplog.records)
         assert "JOBOBJECT_BASIC_LIMIT_INFORMATION" not in joined
@@ -147,7 +147,7 @@ def test_run_in_sandbox_attaches_and_cleans_job_handle():
     """End-to-end: run_in_sandbox succeeds with Job Object wiring; no TypeError path."""
     import logging
 
-    from app.sandbox.runner import run_in_sandbox
+    from app.runtime.code_mode.runner import run_in_sandbox
 
     cap_records: list[logging.LogRecord] = []
 
@@ -157,7 +157,7 @@ def test_run_in_sandbox_attaches_and_cleans_job_handle():
 
     handler = _ListHandler()
     handler.setLevel(logging.ERROR)
-    logger = logging.getLogger("app.sandbox.runner")
+    logger = logging.getLogger("app.runtime.code_mode.runner")
     logger.addHandler(handler)
     try:
         result = run_in_sandbox("print('job-ok')", timeout_s=15, memory_mb=128)
@@ -177,7 +177,7 @@ def test_classify_prefers_memoryerror_over_forbidden_import_noise():
     Traceback formatting under the import blacklist can emit SANDBOX_FORBIDDEN_IMPORT
     noise; root-cause classification must still prefer interpreter MemoryError.
     """
-    from app.sandbox.runner import _classify_sandbox_error
+    from app.runtime.code_mode.runner import _classify_sandbox_error
 
     stderr = (
         "__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IMPORT\n"

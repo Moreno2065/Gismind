@@ -1,12 +1,12 @@
 """数据 I/O 工具：矢量数据的读取与导出。
 
-实现参考 GIS_Agent_技术文档.md §4.5 + §8.4 + docs/06_security.md §3：
+Runtime 数据 I/O 适配器，供 `app.runtime` ToolContract handler 使用：
 - shp 必须以 ZIP 上传（含 .shp .shx .dbf .prj，可选 .cpg）
 - 编码三重降级：.cpg 声明 -> chardet 探测 .dbf -> 轮询常见中文编码
 - 所有编码失败返回友好错误（status=error），不抛 UnicodeDecodeError 给 LLM
 - 国内数据统一转 GCJ02（适配高德底图）
 - 内存解压不落盘
-- 上传安全校验（ZIP 炸弹 / ZipSlip / 文件类型白名单）已在 app/api/upload.py 完成，
+- 上传安全校验（ZIP 炸弹 / ZipSlip / 文件类型白名单）由 Runtime upload API 完成，
   本模块专注解析
 
 公共返回结构：
@@ -37,6 +37,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point, mapping
 
+from app.tools.csv_reader import read_csv_frame
 from app.tools.geo_transform import out_of_china, wgs84_to_gcj02
 
 try:
@@ -694,7 +695,7 @@ class DataIO:
     def load_csv(
         self, path: str, encoding: str = "utf-8"
     ) -> dict:
-        """读取 CSV 文件，返回列名、行数、前 5 行样本。
+        """读取 CSV 文件，return a complete Table plus a bounded preview.
 
         Args:
             path: CSV 文件路径。
@@ -702,17 +703,22 @@ class DataIO:
 
         Returns:
             {"status": "success", "data": {"columns": [...],
-             "row_count": int, "sample": [...]}}
+             "row_count": int, "rows": [...], "sample": [...]}}
             或 {"status": "error", "message": "..."}
         """
         try:
-            df = pd.read_csv(path, encoding=encoding)
-            sample = df.head(5).to_dict(orient="records")
+            df = read_csv_frame(path, encoding=encoding)
+            rows = df.astype(object).where(pd.notna(df), None).to_dict(orient="records")
+            sample = rows[:5]
             return {
                 "status": "success",
                 "data": {
                     "columns": list(df.columns),
                     "row_count": len(df),
+                    # ``rows`` is the complete Table payload.  ``sample`` is
+                    # intentionally only a display preview and must never be
+                    # used as the input to a conversion operation.
+                    "rows": rows,
                     "sample": sample,
                 },
             }
@@ -738,7 +744,8 @@ class DataIO:
 
         内部校验：
         - x_field / y_field 不存在 → error 返回
-        - lon 超出 [-180, 180] 或 lat 超出 [-90, 90] → warning + data 中标注
+        - 缺失、非有限或越界坐标使整张表失败，不静默删除记录。
+        - 范围检查按 CRS 角度单位执行，投影坐标不受经纬度界限约束。
 
         Args:
             csv_df_or_path: CSV 文件路径 或 pandas DataFrame 或 dict（含 data.sample）。
@@ -755,20 +762,26 @@ class DataIO:
         # 解析输入
         try:
             if isinstance(csv_df_or_path, str):
-                df = pd.read_csv(csv_df_or_path)
+                df = read_csv_frame(csv_df_or_path)
             elif isinstance(csv_df_or_path, pd.DataFrame):
                 df = csv_df_or_path
             elif isinstance(csv_df_or_path, dict):
-                # 从 load_csv 结果中提取
+                # ``sample`` is a presentation preview.  Conversion requires
+                # the complete, reconciled Table rows from ``load_csv``.
                 inner = csv_df_or_path.get("data", csv_df_or_path)
-                sample = inner.get("sample", [])
-                if sample:
-                    df = pd.DataFrame(sample)
-                else:
-                    return {
-                        "status": "error",
-                        "message": "无法从输入 dict 中提取表格数据。",
-                    }
+                rows = inner.get("rows") if isinstance(inner, dict) else None
+                if not isinstance(rows, list):
+                    # Keep accepting an unannotated ad-hoc row mapping for
+                    # existing callers, but never treat a load_csv preview
+                    # (which includes row_count) as complete data.
+                    if isinstance(inner, dict) and "row_count" not in inner and isinstance(inner.get("sample"), list):
+                        rows = inner["sample"]
+                    else:
+                        return {"status": "error", "message": "表格输入缺少完整 rows；sample 仅用于预览。"}
+                expected = inner.get("row_count") if isinstance(inner, dict) else None
+                if expected is not None and (not isinstance(expected, int) or expected != len(rows)):
+                    return {"status": "error", "message": "表格 row_count 与完整 rows 数量不一致。"}
+                df = pd.DataFrame(rows)
             else:
                 return {
                     "status": "error",
@@ -801,46 +814,46 @@ class DataIO:
                 ),
             }
 
-        # 坐标值范围检查
-        df_clean = df.dropna(subset=[x_field, y_field]).copy()
-        if len(df_clean) < len(df):
-            dropped = len(df) - len(df_clean)
-            warnings.append(f"移除了 {dropped} 行坐标缺失的记录。")
+        import math
+        import numpy as np
+        from pyproj import CRS
 
-        x_series = pd.to_numeric(df_clean[x_field], errors="coerce")
-        y_series = pd.to_numeric(df_clean[y_field], errors="coerce")
-        valid_mask = x_series.notna() & y_series.notna()
-
-        lon_oor = (x_series[valid_mask] < -180) | (x_series[valid_mask] > 180)
-        lat_oor = (y_series[valid_mask] < -90) | (y_series[valid_mask] > 90)
-        oo_range = lon_oor | lat_oor
-
-        if oo_range.any():
-            oo_count = int(oo_range.sum())
-            warnings.append(
-                f"坐标值范围异常：{oo_count} 个点超出预期范围 "
-                f"(lon ∈ [-180, 180], lat ∈ [-90, 90])。"
-                f"请检查 x_field / y_field 是否选反。"
-            )
-
-        # 构造 Point geometry（保留超出范围的点，仅移除无效坐标）
-        geometries = [
-            (
-                Point(float(x_series.iloc[i]), float(y_series.iloc[i]))
-                if valid_mask.iloc[i]
-                else None
-            )
-            for i in range(len(df_clean))
-        ]
+        x_values = pd.to_numeric(df[x_field], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        y_values = pd.to_numeric(df[y_field], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+        boolean_values = np.array([
+            isinstance(x, (bool, np.bool_)) or isinstance(y, (bool, np.bool_))
+            for x, y in zip(df[x_field], df[y_field])
+        ])
+        invalid = ~np.isfinite(x_values) | ~np.isfinite(y_values) | boolean_values
+        if invalid.any():
+            positions = np.flatnonzero(invalid).tolist()
+            return {
+                "status": "error", "error_code": "INVALID_COORDINATE",
+                "message": f"INVALID_COORDINATE: {len(positions)} 行坐标缺失或不是有限数值，未生成任何点。",
+                "invalid_row_positions": positions,
+            }
+        coordinate_crs = CRS.from_user_input(crs)
+        if coordinate_crs.is_geographic:
+            # pyproj expresses angular unit conversion in radians per unit.
+            # This also handles geographic systems using grads rather than degrees.
+            radians_per_unit = coordinate_crs.axis_info[0].unit_conversion_factor
+            longitude_limit = math.pi / radians_per_unit
+            latitude_limit = math.pi / (2 * radians_per_unit)
+            outside = (np.abs(x_values) > longitude_limit) | (np.abs(y_values) > latitude_limit)
+            if outside.any():
+                positions = np.flatnonzero(outside).tolist()
+                return {
+                    "status": "error", "error_code": "COORDINATE_OUT_OF_RANGE",
+                    "message": f"COORDINATE_OUT_OF_RANGE: {len(positions)} 行坐标超出 {crs} 的经纬度范围，未生成任何点。",
+                    "invalid_row_positions": positions,
+                }
+        geometries = [Point(float(x), float(y)) for x, y in zip(x_values, y_values)]
 
         gdf = gpd.GeoDataFrame(
-            df_clean.drop(columns=[x_field, y_field]),
+            df.drop(columns=[x_field, y_field]),
             geometry=geometries,
             crs=crs,
         )
-        # 移除无效几何（坐标无法转为数值的行）
-        gdf = gdf[gdf.geometry.notna()].copy()
-
         geojson_dict = json.loads(gdf.to_json())
         return {
             "status": "success",
@@ -923,6 +936,9 @@ class DataIO:
                         gdf.set_crs(gdf_or_dict["crs"], inplace=True)
                     except Exception:
                         pass
+                elif gdf_or_dict.get("type") == "FeatureCollection":
+                    # GeoJSON without an explicit CRS uses WGS84 (RFC 7946).
+                    gdf.set_crs("EPSG:4326", inplace=True)
             else:
                 return {
                     "status": "error",

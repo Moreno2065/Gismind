@@ -14,7 +14,6 @@ import {
 } from '@/api/client';
 
 const MSG_KEY_PREFIX = 'gismind.messages.';
-const LEGACY_MSG_KEY = 'gismind.messages';
 
 /** 把 sessions 按 updated_at 降序排序（新的在前）。 */
 function sortByUpdatedAt(items: SessionMeta[]): SessionMeta[] {
@@ -25,25 +24,6 @@ function sortByUpdatedAt(items: SessionMeta[]): SessionMeta[] {
 function clearMessageCache(id: string): void {
   try {
     localStorage.removeItem(MSG_KEY_PREFIX + id);
-  } catch {
-    /* noop */
-  }
-  try {
-    const legacy = localStorage.getItem(LEGACY_MSG_KEY);
-    if (legacy) {
-      // 旧版单一 key 的兜底：仅当旧值与被删除 session 匹配时清理
-      try {
-        const parsed = JSON.parse(legacy) as { sessionId?: string };
-        if (parsed?.sessionId === id) {
-          localStorage.removeItem(LEGACY_MSG_KEY);
-        }
-      } catch {
-        // 非 JSON 字符串 —— 仅当值等于 id 时清理
-        if (legacy === id) {
-          localStorage.removeItem(LEGACY_MSG_KEY);
-        }
-      }
-    }
   } catch {
     /* noop */
   }

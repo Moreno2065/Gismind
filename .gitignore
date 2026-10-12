@@ -66,6 +66,9 @@ tmp/
 
 # 测试与黑盒运行结果（本地证据，不进入源码仓库）
 blackbox-results/
+/backend/.ci-*/
+/backend/.pytest-*/
+/backend/.live-reference-smoke/
 
 # 本地生成的栅格/导出产物
 backend/*.tif

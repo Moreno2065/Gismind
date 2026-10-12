@@ -2,14 +2,18 @@
 // 混合渲染消息气泡 — blocks 数组：text(react-markdown) / map(LazyMapView) / chart(ChartView)。
 // 顶部状态条（thinking/fetching/error），底部思考折叠。
 
-import { memo } from 'react';
+import { lazy, memo, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage, MessageStatus } from '@/types/message';
-import { LazyMapView } from './LazyMapView';
-import { ChartView } from './ChartView';
-import { ThinkingCollapse } from './ThinkingCollapse';
+import { ArtifactMapView } from './ArtifactMapView';
 import TraceTimeline from './TraceTimeline';
+
+const ChartView = lazy(async () => {
+  const module = await import('./ChartView');
+  await module.prepareCharts();
+  return { default: module.ChartView };
+});
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -60,11 +64,6 @@ function MessageBubbleImpl({ message, onBeforeMapLoad, onAfterMapLoad }: Message
             </div>
           )}
 
-          {/* 思考折叠（仅 assistant 且有思考链） */}
-          {!isUser && message.thinkingTrace && message.thinkingTrace.length > 0 && (
-            <ThinkingCollapse steps={message.thinkingTrace} />
-          )}
-
           {!isUser && message.executionTrace && message.executionTrace.length > 0 && (
             <TraceTimeline
               events={message.executionTrace}
@@ -88,19 +87,31 @@ function MessageBubbleImpl({ message, onBeforeMapLoad, onAfterMapLoad }: Message
               }
               if (block.type === 'map') {
                 return (
-                  <LazyMapView
-                    key={i}
-                    layers={block.layers}
-                    bbox={block.bbox}
-                    expired={block.expired}
-                    featureCount={block.featureCount}
+                  <ArtifactMapView
+                    key={block.artifact_id ?? i}
+                    block={block}
                     onBeforeLoad={onBeforeMapLoad}
                     onAfterLoad={onAfterMapLoad}
                   />
                 );
               }
               if (block.type === 'chart') {
-                return <ChartView key={i} config={block.config} />;
+                return (
+                  <Suspense
+                    key={i}
+                    fallback={
+                      <div
+                        className="mt-3 flex items-center justify-center rounded-lg border border-ink-700 bg-ink-900 p-3 text-sm text-ink-300"
+                        style={{ height: 320 }}
+                        role="status"
+                      >
+                        图表加载中…
+                      </div>
+                    }
+                  >
+                    <ChartView config={block.config} />
+                  </Suspense>
+                );
               }
               return null;
             })}

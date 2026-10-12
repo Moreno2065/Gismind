@@ -89,11 +89,11 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
       onKeyDown={renaming ? undefined : handleActivateKeyDown}
       className={cn(
         'group relative cursor-pointer select-none',
-        'rounded-sm border bg-ink-800/60 px-3 py-2',
-        'transition-colors duration-150',
+        'rounded-sm border px-3 py-2',
+        'transition-colors duration-150 motion-reduce:transition-none',
         active
           ? 'border-l-2 border-l-amber border-r border-y-ink-700 bg-amber/5'
-          : 'border-ink-700 hover:border-amber/40',
+          : 'border-ink-700 bg-ink-800/60 hover:border-amber/40',
       )}
     >
       {/* 顶部：序列号 + has_map 标（tool_count 移到下方 meta strip，避免与 hover 按钮重叠） */}

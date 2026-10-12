@@ -1,20 +1,6 @@
 """Gismind 测试公共 fixtures。"""
 
-import json
-from pathlib import Path
-import fakeredis
 import pytest
-
-from app.utils.redis import set_redis_instance
-
-
-@pytest.fixture(autouse=True)
-async def fake_redis():
-    """为全部测试提供隔离的 fakeredis 实例。"""
-    r = fakeredis.FakeAsyncRedis()
-    set_redis_instance(r)
-    yield r
-    set_redis_instance(None)
 
 
 class MockResponse:
@@ -27,15 +13,6 @@ class MockResponse:
 
     def json(self):
         return self._json_data or {}
-
-
-@pytest.fixture
-def golden_coords():
-    """坐标转换黄金用例（WGS84 <-> GCJ02）"""
-    path = Path(__file__).parent / "fixtures" / "golden_coords.json"
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8")).get("cases", [])
 
 
 @pytest.fixture
@@ -81,3 +58,20 @@ def osm_poi_sample():
             },
         ],
     }
+
+
+@pytest.fixture
+def transform_cases():
+    """Runtime-owned coordinate cases for the public transform algorithm.
+
+    These are generated in the test process rather than loaded from a legacy
+    golden/evidence file, so the test exercises only the documented numerical
+    contract and has no historical artifact dependency.
+    """
+    return [
+        {"name": "北京天安门", "wgs84": [116.3912, 39.9075], "gcj02": [116.3975, 39.9087], "city": "北京"},
+        {"name": "上海东方明珠", "wgs84": [121.4955, 31.2396], "gcj02": [121.5018, 31.2408], "city": "上海"},
+        {"name": "南京新街口", "wgs84": [118.7782, 32.0417], "gcj02": [118.7845, 32.0429], "city": "南京"},
+        {"name": "乌鲁木齐红山", "wgs84": [87.6168, 43.8256], "gcj02": [87.6232, 43.8268], "city": "乌鲁木齐"},
+        {"name": "海口钟楼", "wgs84": [110.3310, 20.0310], "gcj02": [110.3374, 20.0322], "city": "海口"},
+    ]

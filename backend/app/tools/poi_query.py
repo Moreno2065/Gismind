@@ -1,6 +1,6 @@
 """POI 多源融合查询工具。
 
-实现参考 GIS_Agent_技术文档.md §4.3 + docs/02_data_models.md §3.1。
+Runtime POI provider 适配器；网络失败由 Runtime Task/Run 事实记录。
 
 核心设计：
 1. **双源策略**：高德为主（全量、结构化、GCJ02），OSM 补漏（开源、无配额、WGS84）

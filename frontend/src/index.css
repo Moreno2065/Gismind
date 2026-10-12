@@ -20,7 +20,7 @@
     --c-ink-700: 31 38 50;     /* borders */
     --c-ink-600: 42 51 64;     /* hover */
     --c-ink-500: 58 69 84;     /* muted text */
-    --c-ink-400: 91 103 118;   /* secondary text */
+    --c-ink-400: 130 145 163;  /* readable secondary text */
     --c-ink-300: 138 150 166;  /* tertiary */
     --c-ink-200: 184 194 207;  /* primary text on dark */
     --c-ink-100: 221 227 235;  /* headings */
@@ -155,6 +155,49 @@
     outline-offset: 2px;
   }
 }
+
+/* Runtime workbench: cartographic instruments, not a second execution state. */
+.runtime-workbench { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.workbench-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 24px; border-bottom: 1px solid rgb(var(--c-ink-700)); background: rgb(var(--c-ink-950) / .7); }
+.workbench-kicker { font: 10px ui-monospace, monospace; letter-spacing: .19em; color: rgb(var(--c-ink-400)); }
+.workbench-body { display: grid; grid-template-columns: minmax(0, .95fr) minmax(380px, 1fr); flex: 1; min-height: 0; }
+.workbench-artifacts { min-width: 0; overflow: auto; padding: 20px; border-right: 1px solid rgb(var(--c-ink-700)); background: rgb(var(--c-ink-900) / .48); }
+.workbench-chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.workbench-composer { flex-shrink: 0; max-height: 56%; overflow-y: auto; border-top: 1px solid rgb(var(--c-ink-700)); background: rgb(var(--c-ink-900) / .94); }
+.composer-field { box-shadow: 0 4px 24px rgb(var(--c-bubble-shadow) / .12); transition: border-color .2s ease, box-shadow .2s ease; }
+.composer-field:focus-within { border-color: rgb(var(--c-amber) / .65); box-shadow: 0 0 0 3px rgb(var(--c-amber) / .07); }
+.workbench-tabs { display: none; padding: 3px; border: 1px solid rgb(var(--c-ink-700)); border-radius: 9px; background: rgb(var(--c-ink-900)); }
+.workbench-tabs button { padding: 6px 12px; border-radius: 6px; font-size: 12px; color: rgb(var(--c-ink-400)); }
+.workbench-tabs button[aria-pressed='true'] { background: rgb(var(--c-ink-700)); color: rgb(var(--c-ink-100)); }
+.workbench-tabs span { margin-left: 5px; font: 10px ui-monospace, monospace; color: rgb(var(--c-amber)); }
+.welcome-atelier { max-width: 590px; padding: 40px 34px; width: 100%; margin-block: auto; flex-shrink: 0; }
+.welcome-atelier h2 { margin: 25px 0 20px; font-family: 'Georgia', 'Noto Serif SC', 'Songti SC', 'SimSun', serif; font-size: clamp(30px, 3.3vw, 49px); line-height: 1.35; letter-spacing: -.04em; color: rgb(var(--c-ink-100)); }
+.welcome-atelier h2 span { color: rgb(var(--c-amber)); }
+.welcome-description { font-size: 13px; line-height: 1.9; color: rgb(var(--c-ink-400)); }
+.welcome-actions { display: grid; gap: 10px; margin: 28px 0 30px; }
+.welcome-actions button { display: flex; align-items: center; text-align: left; gap: 16px; padding: 16px; border: 1px solid rgb(var(--c-ink-700)); border-radius: 11px; background: rgb(var(--c-ink-900) / .85); transition: transform .2s ease, border-color .2s ease; }
+.welcome-actions button:hover { transform: translateY(-2px); border-color: rgb(var(--c-amber) / .5); }
+.welcome-actions button > span:nth-child(2) { flex: 1; }
+.welcome-actions strong { display: block; font-size: 13px; font-weight: 500; color: rgb(var(--c-ink-100)); }
+.welcome-actions small { display: block; margin-top: 5px; font-size: 11px; color: rgb(var(--c-ink-400)); }
+.welcome-action-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgb(var(--c-amber) / .22); border-radius: 8px; background: rgb(var(--c-amber) / .07); color: rgb(var(--c-amber)); font-size: 20px; }
+.welcome-footnote { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid rgb(var(--c-ink-700)); padding-top: 18px; color: rgb(var(--c-ink-400)); font-size: 10px; }
+@media (max-width: 1199px) {
+  .workbench-body { display: flex; }
+  .workbench-tabs { display: flex; }
+  .workbench-chat, .workbench-artifacts { width: 100%; }
+  .workbench-artifacts { border-right: 0; }
+  .workbench-body[data-mobile-pane='chat'] .workbench-artifacts, .workbench-body[data-mobile-pane='data'] .workbench-chat { display: none; }
+  .welcome-atelier h2 { font-size: clamp(32px, 6vw, 48px); }
+}
+@media (max-width: 767px) {
+  .workbench-toolbar { padding: 12px 16px; }
+  .workbench-kicker { font-size: 9px; letter-spacing: .12em; }
+  .workbench-artifacts { padding: 12px; }
+  .welcome-atelier { padding: 24px; }
+  .welcome-actions { margin: 22px 0; }
+}
+@media (prefers-reduced-motion: reduce) { .welcome-actions button:hover { transform: none; } }
 
 /* =========================================================================
    Chat prose — Markdown 渲染样式（react-markdown 输出）

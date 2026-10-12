@@ -1,15 +1,17 @@
 """Gismind FastAPI 入口。"""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+import uuid
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.agents.checkpointer import get_sqlite_checkpointer
-from app.api import chat, upload, memory, sessions
+from app.api import runtime
 from app.config import settings, validate_config
+from app.runtime import ArtifactStore, RuntimeDB, RuntimeStore, RuntimeSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +30,8 @@ def _configure_logging() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """应用生命周期：启动时确保 SqliteSaver 检查点数据库文件存在。"""
+    """应用生命周期：启动 Runtime supervisor/worker。"""
     _configure_logging()
-    get_sqlite_checkpointer()
 
     # 沙箱内存硬限校验
     import sys
@@ -42,41 +43,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "pywin32 未安装 — 沙箱内存硬限（Job Object）将静默失效。"
                 " 请执行: pip install pywin32>=306"
             )
-    yield
+    # Runtime execution is a process service, not an ad-hoc request side
+    # effect.  Start one durable worker for the single-user deployment and
+    # always stop it with the ASGI application.
+    runtime = getattr(app.state, "runtime_store", None)
+    artifacts = getattr(app.state, "artifact_store", None)
+    supervisor = getattr(app.state, "runtime_supervisor", None)
+    if runtime is None:
+        runtime = RuntimeStore(RuntimeDB())
+        runtime.initialize()
+        app.state.runtime_store = runtime
+    if artifacts is None:
+        artifacts = ArtifactStore(runtime=runtime)
+        app.state.artifact_store = artifacts
+    if supervisor is None:
+        supervisor = RuntimeSupervisor(runtime, artifacts)
+        app.state.runtime_supervisor = supervisor
+    worker_started = False
+    try:
+        if supervisor.autostart and not supervisor.health_snapshot()["running"]:
+            supervisor.start(f"api-{os.getpid()}-{uuid.uuid4().hex}")
+            worker_started = True
+        yield
+    finally:
+        if worker_started or supervisor.health_snapshot()["running"]:
+            supervisor.stop(timeout=5)
 
 
 def create_app(
     *,
-    redis_client=None,
-    checkpointer=None,
-    dispatcher_llm=None,
-    sub_agent_llm=None,
+    runtime_store=None,
+    artifact_store=None,
+    runtime_supervisor=None,
 ) -> FastAPI:
-    """Create the FastAPI application.
-
-    Args:
-        redis_client: optional pre-built async Redis client stored on
-            ``app.state.redis`` for PendingStore and tests. Defaults to the
-            process-wide client from ``get_redis()`` when first needed.
-        checkpointer: optional LangGraph checkpointer stored on
-            ``app.state.checkpointer``. Defaults to the SqliteSaver singleton.
-        dispatcher_llm: optional LLM transport for root planner_router,
-            stored on ``app.state.dispatcher_llm`` (tests only; production None).
-        sub_agent_llm: optional LLM transport for sub-agent planner/verifier/judge,
-            stored on ``app.state.sub_agent_llm`` (tests/e2e only; production None).
-    """
+    """Create the FastAPI application around the durable Runtime."""
     app = FastAPI(
         title="Gismind",
-        description="基于 React Loop 的空间智能 GIS Agent",
-        version="1.6.0",
+        description="Agent-driven GIS Runtime",
+        version="2.0.0",
         lifespan=lifespan,
     )
 
-    # Runtime resource seams for routes/tests (real Redis / SqliteSaver).
-    app.state.redis = redis_client
-    app.state.checkpointer = checkpointer
-    app.state.dispatcher_llm = dispatcher_llm
-    app.state.sub_agent_llm = sub_agent_llm
+    # Runtime resources are injectable for API tests and embedded single-user
+    # deployments.  They are initialized lazily when omitted.
+    app.state.runtime_store = runtime_store
+    app.state.artifact_store = artifact_store
+    app.state.runtime_supervisor = runtime_supervisor
+
+    @app.middleware("http")
+    async def request_id_middleware(request, call_next):
+        request_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex}"
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
     # CORS 配置：allow_headers=["*"] 允许所有请求头。
     # 安全说明：当前宽松策略适用于开发环境。生产环境应将 allow_headers 限定为
@@ -94,44 +114,61 @@ def create_app(
     @app.get("/api/health")
     async def health():
         missing = validate_config()
-        all_ok = not missing
+        runtime_store = getattr(app.state, "runtime_store", None)
+        supervisor = getattr(app.state, "runtime_supervisor", None)
+        store_check = {"status": "error", "writable": False}
+        queue_check = {
+            "queued_runs": 0, "planning_runs": 0, "ready_tasks": 0,
+            "active_tasks": 0, "retry_wait_tasks": 0,
+        }
+        try:
+            if runtime_store is None:
+                raise RuntimeError("runtime store is unavailable")
+            # BEGIN IMMEDIATE proves that this process can acquire SQLite's
+            # writer lock without adding synthetic health-check rows.
+            with runtime_store.transaction() as conn:
+                conn.execute("SELECT 1").fetchone()
+            counts = runtime_store._read(lambda c: {
+                "queued_runs": int(c.execute("SELECT COUNT(*) FROM runs WHERE status='queued'").fetchone()[0]),
+                "planning_runs": int(c.execute("SELECT COUNT(*) FROM runs WHERE status='planning'").fetchone()[0]),
+                "ready_tasks": int(c.execute("SELECT COUNT(*) FROM tasks WHERE status='ready'").fetchone()[0]),
+                "active_tasks": int(c.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('leased','running','validating')").fetchone()[0]),
+                "retry_wait_tasks": int(c.execute("SELECT COUNT(*) FROM tasks WHERE status='retry_wait'").fetchone()[0]),
+            })
+            queue_check.update(counts)
+            store_check = {"status": "ok", "writable": True}
+        except Exception as exc:
+            store_check["error"] = type(exc).__name__
+
+        worker_check = supervisor.health_snapshot() if supervisor is not None else {
+            "running": False, "status": "unavailable",
+        }
+        worker_required = bool(supervisor is not None and supervisor.autostart)
+        worker_ok = bool(worker_check.get("running")) if worker_required else supervisor is not None
+        all_ok = not missing and store_check["status"] == "ok" and worker_ok
 
         if settings.APP_ENV == "dev":
-            # 真正 ping Redis，不造假
-            redis_status = "ok"
-            try:
-                from app.utils.redis import get_redis
-                client = getattr(app.state, "redis", None) or get_redis()
-                await client.ping()
-            except Exception:
-                redis_status = "error"
-
             checks = {
-                "redis": redis_status,
-                "celery": "skipped",  # Celery 未在 dev 环境部署，标记 skipped
-                "llm": "ok" if settings.LLM_API_KEY else "error",
+                "runtime_store": store_check,
+                "worker": worker_check,
+                "queue": queue_check,
+                "llm": "ok" if all((settings.LLM_API_KEY, settings.LLM_BASE_URL, settings.LLM_MODEL)) else "error",
                 "amap": "ok" if settings.AMAP_KEY else "error",
             }
-            # celery skipped 不算 error
-            all_ok = all_ok and all(
-                v in ("ok", "skipped") for v in checks.values()
-            )
+            all_ok = all_ok and checks["llm"] == "ok" and checks["amap"] == "ok"
             return {
                 "status": "ok" if all_ok else "degraded",
-                "version": "1.6.0",
+                "version": "2.0.0",
                 "checks": checks,
             }
         # 非 dev 环境：不暴露逐服务详情，仅返回整体健康状态
         return {
             "status": "ok" if all_ok else "degraded",
-            "version": "1.6.0",
+            "version": "2.0.0",
         }
 
     # 挂载 API 路由
-    app.include_router(chat.router)
-    app.include_router(upload.router)
-    app.include_router(memory.router)
-    app.include_router(sessions.router)
+    app.include_router(runtime.router)
 
     return app
 

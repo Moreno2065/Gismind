@@ -9,6 +9,7 @@ reproject_layer, batch_reproject_layers。
 """
 
 import math
+import warnings
 
 import geopandas as gpd
 import numpy as np
@@ -377,6 +378,17 @@ class TestCentroidLayer:
         geom = result["data"].geometry[0]
         assert geom.geom_type == "Point"
         assert not geom.is_empty
+
+    def test_centroid_layer_never_computes_directly_in_geographic_crs(self):
+        analyzer = SpatialAnalyzer()
+        square = _make_proj_square_polygon(500000, 3500000, 501000, 3501000, crs="WGS84")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = analyzer.centroid_layer(square)
+
+        assert result["status"] == "success"
+        assert not any("geographic CRS" in str(item.message) for item in caught)
 
 
 # ============================================================

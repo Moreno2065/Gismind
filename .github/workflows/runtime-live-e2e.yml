@@ -1,0 +1,89 @@
+name: Runtime live Chinese E2E
+
+# Paid calls are explicit and separate from ordinary pull-request checks.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        type: choice
+        options: ['prompt2000', 'robustness']
+        default: 'prompt2000'
+        description: Chinese prompt matrix or real multi-turn and adversarial actions
+      cases:
+        type: choice
+        options: ['20', '2000']
+        default: '20'
+        description: Chinese prompt cases (20 is one per family)
+      reservation_usd:
+        type: choice
+        options: ['20', '200']
+        default: '20'
+        description: Conservative token reservation cap, not predicted invoice
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-live-e2e
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: live-llm
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONUTF8: '1'
+      PYTHONHASHSEED: '0'
+      MPLBACKEND: Agg
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      LLM_BASE_URL: https://api.deepseek.com/v1
+      LLM_MODEL: deepseek-flash
+      GISMIND_CASE_COUNT: ${{ inputs.cases }}
+      GISMIND_LIVE_SUITE: ${{ inputs.suite }}
+      GISMIND_RESERVATION_USD: ${{ inputs.reservation_usd }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/constraints-ci.txt
+            backend/requirements-ci.lock
+      - run: >-
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-ci.lock
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Validate frozen corpus without spending quota
+        run: python -m tests.live.prompt_e2e_2000 --inventory
+      - name: Validate robustness corpus without spending quota
+        run: python -m tests.live.runtime_robustness_smoke --inventory
+      - name: Execute live API and semantic gates
+        shell: bash
+        env:
+          LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ "$GISMIND_LIVE_SUITE" = "robustness" ]; then
+            python -m tests.live.runtime_robustness_smoke --live --input-usd-per-million 1.2 --output-usd-per-million 1.2 --max-cost-usd "$GISMIND_RESERVATION_USD" --output .gismind/live-ci
+          else
+            extra=()
+            if [ "$GISMIND_CASE_COUNT" = "20" ]; then extra+=(--smoke-families); fi
+            python -m tests.live.prompt_e2e_2000 --live --limit "$GISMIND_CASE_COUNT" "${extra[@]}" --concurrency 2 --qps 1 --usd-per-million 1.2 --max-cost-usd "$GISMIND_RESERVATION_USD" --output .gismind/live-ci
+          fi
+      - name: Preserve failures and resumable evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: real-llm-evidence-${{ github.run_id }}
+          path: backend/.gismind/live-ci/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

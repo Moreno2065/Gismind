@@ -1,0 +1,1642 @@
+{
+  "phase": 7,
+  "status": "approved-for-delete",
+  "policy": "exact-paths-only",
+  "entries": [
+    {
+      "path": ".pytest-runtime-fail/test_supervisor_closes_queue_a0/data/artifacts/sha256/2d/2d91ee18907482fee904a730b9f9300805d3c09e540545fdcdc8b6722d6e0629",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "2d91ee18907482fee904a730b9f9300805d3c09e540545fdcdc8b6722d6e0629",
+      "approved": true
+    },
+    {
+      "path": ".pytest-runtime-fail/test_supervisor_closes_queue_a0/data/artifacts/sha256/a9/a9e5cdac41a676114760c178add9061cc910a1ad3714849ba64b1761936d036d",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a9e5cdac41a676114760c178add9061cc910a1ad3714849ba64b1761936d036d",
+      "approved": true
+    },
+    {
+      "path": ".pytest-runtime-fail/test_supervisor_closes_queue_a0/runtime.db",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a8cb9966df611320986b234e8186321579d9c122f5f817408695583e6a892c04",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/build_sub_agent.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "app.runtime.executor and queue",
+      "sha256": "42938150d1969fbdb8f29462f2878e51c6517f39f55e1d5e56c90b557672c691",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/checkpointer.py",
+      "category": "legacy-persistence",
+      "replacement_evidence": "app.runtime.db RuntimeDB",
+      "sha256": "78605cf3e6ee5478643919a94b2053bdc55946b7da10186c3e85964746423ed1",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/dispatcher.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "app.runtime.planner, compiler, queue; runtime E2E",
+      "sha256": "a360c933a0bb3189359fde3385db78d318a77c14284d07b993538afeb06d4a0f",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/events/__init__.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "88cc83b34efefeb346e69e3b32c9242b07ae3e256f1aa47a7b9325112b8b8fee",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/events/current.py",
+      "category": "legacy-events",
+      "replacement_evidence": "RuntimeDB events table and SSE replay",
+      "sha256": "517da5e1353c21abe3f5b1b565eb2a87d610229ffa304ea7a417dcb8ff1eff39",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/events/stream_adapter.py",
+      "category": "legacy-events",
+      "replacement_evidence": "app.api.runtime event projection",
+      "sha256": "8953fae495bda3885e30604d1ab7ee4488cceed8fdeae37ff8246733b61c75a0",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/judge.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "deterministic Runtime task status transitions",
+      "sha256": "e24dec116762faaebe5edc803595995305cde8733a8c1f60483f753de6bdac43",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/observer.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "b48163abe1a6df8e0fd3e8c254dc044c86c1a376ad3bfcd62a96af499c3a1173",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/pending.py",
+      "category": "legacy-persistence",
+      "replacement_evidence": "Runtime run awaiting_input/resume tables",
+      "sha256": "41f6310b3f124828902f3def98ae5572d9850cbeddd8bb76f84f8e4a4e0f722f",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/planner_factory.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8a16151879853d200a23f63fb16104c94dbf0ae8bdbbf96f14c4028265067a0e",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/refine_router.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "Compiler rejection and awaiting_input state",
+      "sha256": "6af2178cb65a34a867189f66d2046bffc2b5c1c5faf93511da6c38831c4a711c",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/run_control.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "RuntimeDB commands and durable worker cancellation",
+      "sha256": "5f0f939b4d5eaf50be18d894710525e90274c33d7136fc48124ad9f48a45fd84",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/state.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "eb4af6399fbfc7ca8e1d70a13e7f7e614fbc0ee85692b5e4d5883f46a97e775f",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/verifier_node.py",
+      "category": "legacy-runtime",
+      "replacement_evidence": "Runtime contract validators and executor",
+      "sha256": "9a78335e8c187ee8bd6a89ef4951bfd8f48389a5b89a4c9b680f51c2f7d004fd",
+      "approved": true
+    },
+    {
+      "path": "backend/app/api/chat.py",
+      "category": "legacy-api",
+      "replacement_evidence": "app.api.runtime runs/events API; 410 compatibility route",
+      "sha256": "7edbb3c5e4cca43d0bdff48b287761aa64e97a7330826029efb7af1936b9124a",
+      "approved": true
+    },
+    {
+      "path": "backend/app/api/upload.py",
+      "category": "legacy-api",
+      "replacement_evidence": "app.api.runtime /artifacts/uploads",
+      "sha256": "11a44925f07bfa940858c6e44ec1a7a1ae0fa056ff174ea4679bd5feb07ba64",
+      "approved": true
+    },
+    {
+      "path": "backend/app/runtime/legacy_adapters.py",
+      "category": "runtime-bridge",
+      "replacement_evidence": "app.runtime.tool_handlers and app.runtime.code_mode direct handlers",
+      "sha256": "",
+      "approved": true
+    },
+    {
+      "path": "backend/app/utils/memory.py",
+      "category": "legacy-persistence",
+      "replacement_evidence": "RuntimeStore session/run/artifact facts",
+      "sha256": "8ac141ed9ae54ef0c62f6589df00b2d109f04fd2f4e6685da571e151cf0fd6b6",
+      "approved": true
+    },
+    {
+      "path": "backend/app/utils/redis.py",
+      "category": "legacy-persistence",
+      "replacement_evidence": "app.runtime.db and ArtifactStore",
+      "sha256": "b42674212e0fdb7257017c1b9133b9b0bce3a01985ebe275ea51e40d9026a8da",
+      "approved": true
+    },
+    {
+      "path": "backend/app/utils/session.py",
+      "category": "legacy-persistence",
+      "replacement_evidence": "RuntimeStore session/message tables",
+      "sha256": "772648512bbead214c3e84a295aafcd47aefe672989337dd16747bfe8dee8e45",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/fixtures/golden_code_mode.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "runtime code contract tests with tmp_path",
+      "sha256": "e97b175d251b891ba5a76ed5e67dc95af0e7f1c38bf214e68a0012dd5fad9b4d",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/fixtures/golden_coords.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "runtime compiler and artifact tests",
+      "sha256": "261c3b0ac82d2564da15bc0799cebee58340b7cbe32702fbdc4e4f528eccb8a2",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/fixtures/golden_drift.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "runtime contract regression tests",
+      "sha256": "16cc7d9c2a812d0cf7fed1ab9d20df3de867e91979f20323c4219fd4ba14ad52",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/fixtures/golden_ensemble.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "runtime deterministic planner tests",
+      "sha256": "8235cf1d0abdcb4753af9499270c9288df35f2b4c7bafefd5ef14d51c7f7255b",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/fixtures/golden_sandbox.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "runtime process isolation tests",
+      "sha256": "f4b959cc7f54cab15aff2d8e9783c747fa81010fbc9e67216b828f49586cf94c",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/bus_stations.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "b4a27fc022990ee2a1429bfc880c3eee30ad7c2c7fdb8ec733e7ac881ab18266",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/invalid_parcels.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "55d587c8a348495351aac76b84c3357a913f485ed743c4583387736f13d0626c",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/nanjing_admin.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "d105357a321a61817410771c62fa64dff499ef6b99a69accfdeca184b3f62547",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/nanjing_dem.tif",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "93bdf84214ae1c6a79b1f4a206a2652b74af97df95ae7e893b4a8b2a1420fe9c",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/parcels.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "852e33fe607be0a374de7d5303295bd92508fbd5c9f5dfb3c3139b6e29c503b6",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/sample_points.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "61eabba97f4937d826ad16cda0e732aafcedafcaf50ae04ee0bcb2cbc873fda6",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/streets.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "f285546611e634cb6dc9120017c4f57312e35a2230519bf77f11c7f5a720e2c1",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/xuanwuhu.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "97f7fea05f113c7d3e411d54b6c780e193284345b49b0b1441b7532ec7e03e2f",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/.matrix-fixtures-ychdhsiw/zijinshan.geojson",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "69406f701821e16e139aba17eaefa123986d314473c2076e11c5907b6ab7328d",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-final-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "c81871ad25215312b30635c000a440468e53366f3a0b3d6859044927a152b781",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-final2-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "e73e08103d7cf5a540d0ddd1c9d11c297f4f5ba7de512f5c5531c3496a1376b8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-final3-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8be7d1f24d87ce0dd4f941011cdc97176273eae4ef6a873ab06fef71f874b11e",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-full-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a0d572618f9b1ac8cd5d3ca99efb92733bb7b4c7c225b5ed61d4a07e14ec4c2f",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-semantic-full-final-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "7afb8b46c0077fbfe91690fd3ca287cd0888688961c5c90793ba5889c66acac9",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-semantic-full-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8e0bdf51946de7e8b2e3f73f6fd4ce31d59db029dd05258de988dd0115b249f6",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/backend-semantic-full-release-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "2c3174ce121042b50efda10cb9bf2264d72d1c221cb0161646d15bdef31303f6",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/debug-m013.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "31c74dfeb5055fda85ee378c5349cc28647cc38464a301978efaf4b6408a98d5",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/debug-m196-final.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "e64299064c61d0e7007cc93135ffc339f950b58b0660321491f2f4ea45237039",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/debug-m199-diagnostic.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a3490f7d86a5aff984e35fdb0448ddaf04caf49a115e3b96e877644bee83da0b",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/debug-m199-final.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "22a6b0973d8cf3dcc1b6a2d89093c8ad436ffde09425bf45c7edbabdfdf21de8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/matrix-backend.stderr.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "6a705aa188a6f624e22e77075d4e3d2005f9eb40c8b1984af692e7c6943380d0",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/matrix-backend.stdout.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "6000c22b6072375277ed9c7c51e5a0ed284f6e9ba386e609db4304ee39a11a1b",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/phase2-final-backend-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "ef156ba2a08548f1aac8008201094899cd12d98fb994dc8c294e3b1d4625f1c1",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/phase2-p1-closure-junit.xml",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "6b56530506ced6cf0ac7ca9b63a326fad0822a06f916141e59cf9b745c213526",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-converged.stderr.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-converged.stdout.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "1d74396cec11237a8baa835f37f17f070e8824956fdc593937b2652a59da2d02",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-multiturn-converged.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "c96167a40a7c3fe2b6274ca9eec503264fe3313769ee21fd700fc227e0a1f7c2",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-new-tools-smoke.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "69c1624a574f8cf3010328995287b86c639e98ebc440e4101df64c0917bc32e1",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-retry-M143.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "d081cdd700226e458b8c69753d0a64401352eaaa6bf0cde3903607ba4443eb23",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-smoke-001-006.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "75360870d49e2caab4bab1028e932447334bceac658f7fc2a3a5c4a65efc0baf",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-smoke-M001.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "7e1e4032707c50a3c2ac7d35455b25476135b086d0d0f00b127d7608acfcafb7",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-smoke-M007.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "610b4d0b10827a7f8ad70a1eee1a960101953968a94c6f9d42c600e5d8555ac8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-tail2.stderr.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/prompt-matrix-tail2.stdout.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "bda106c21db01451e462f35cd5f2655e82204f2ee6292101090cca58702209d0",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_E2E_AUDIT_2026-08-10.md",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "37dbed3c6a837aa6c6d312fa12ee354f9b99dc63f2779e2da192a7426438eabe",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_E2E_CONVERGED_2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "0ed367815d56608b391e18bab24c95b30ba73716f3f2a858a3cbceb5654471f0",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_E2E_FINAL_2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "90181c7631d169c68da9054e8968ff6ab83367f28bc5145c853743f4e954ca86",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_E2E_STABLE_2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8f39f97ecbbe28336f56e57df1d1a14e8566f065617fed79e98cce079cde2a02",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_CONVERGED.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "f0c9c356a82646daada1a4cd3a3870e834f3a069cbea1389b00a9084b29f2e89",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_RUN1.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "06821d6aafddf6175839a36b5f709233e47ace5eaccfffa02c96cb7b40392442",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_SEMANTIC_SELECTED_FINAL.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "95dd70bac4b364da2f209b39165c0008f8f927fe22552730011dbdf36b402aa4",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_SEMANTIC_SELECTED.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "6de9293f33c0fef8d9f56f47c40c4aa83113151e0f79f3af4ff0bb665a5f4f0b",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_TAIL1.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "b8f0c1d02450d7ad5e9daa04345bdd9748e22a5ace19603ee065421680ef7990",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/REAL_LLM_PROMPT_MATRIX_200_TAIL2.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "c2579341893553b7d9b0f129ab22799988103760d02a10d39d128020989a2f98",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-batch-01-06.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "770f017a1dcc6cf1a1629a9f5be2870ed46b52c1525639649a9894eaf1b92ea2",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-batch-03-06.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "d954538e4eec923aa0fbdac996b5cc82583b716f40bc4fecf6cdf2b558e0d0d7",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-batch-07-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "11f44bac4df40abd8679ad7b809157b2942acb9f45ff093409cc81fa3db6c167",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-batch-11-13.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "107e22423a63dcda9a4ed6d3c9d6d8f31543de309ba6e574db560b1aa04a0eac",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-05.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "33d1f8f77d967fc2948697687ba0050001c62a8f75b872bac0e466af2ed27637",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-06.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "563aef4dc38420dc53414b0429dbe2823dd1026a20f1ce76b9de7b135cf632d8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-09.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "0f6974be5b2193b5450ae3520016858ab48046d34b29ae41d0ea5c98b5766ddd",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "4b14282e1ff1d40fd2f5e56a81a25a661b9974e682f44f653df3fa0e22f39ff8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-12.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "3724d9f7b9ff400440c71127f54e005a74c6a0e11469a2ed5417a64f1aad60a8",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-13.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "28ff14abb10689670159e5a9b4fabe634dff7fd5e598ea94b34bef61781b1a9a",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-14.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "f097538afc71578c8f94fc014f454a48d248def1af6136328af2d5bc60770b3b",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-15.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "22411ac8ba26d74f3782b267292e5a67dc730cf808fba775099b1364aacdb837",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-16.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "db6e302999bf8e3bf5b83bf82dcd075f97686e47742607caadc32542eec67635",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-17.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "b75d38281770172ceddea55e9b095d9bc9ec271d93f67e67b7e420ddf1466510",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-18.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "488785857f6d84967bf81c0950cada8adbcf2f53fcb74f117554f97fa3794641",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-19.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8d9e137208ba91b36c8a2304ab665f63f797accda490c82b35ce9a1d08bd84aa",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-20.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "07e00d69d9f07304ad89080e26aff5ac620e755ef8e10482ef809fa51660afe3",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-21.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8e1cc14f22963c4b2198ff0e516753b0ff9f8fadbd9b4522435f031d499f45ec",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-22ab.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "775c539e9e598f73207adbb27d1ec6548981f890b3ae4b93fe66375c5437ca4d",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/real-llm-case-23.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "9b4d593164c5dbbb4f3e659b00ebf4fa4493a69e96da54d92aa0752e1ad360e5",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-context-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "b22e487394bb2e8f65e0e7ade43adb6d60e4d8bccaecffe0d2841543eba053b7",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-context-fixed-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "375a2e51258d1a498cfe5edc947c1a94a89a7d419d3db8a6ac6e4a68fc763a7e",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-core-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "e0ed582dd767e704bd0d369bff644f8de4e9584d8d3facf3c85336d7db70a2cd",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-final-residuals-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "63d96883351bb145ea1fc792caca9ec1173f16b629e75c50861dfc2adc82cd75",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-followup-fixed-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "3c5a7c92b300901d1fe4f158b496bb4b7b1e02865fe59ce3c1a3ab5bd2492b97",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-raster-14-final-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "8453d671948b9d04e8e54bc91660685cd91b84a7db199bbff44b8fc2944d3615",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-raster-export-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "267fe01664acaeab92f4a043796728f38413e24b18947417670ad1734465a1ae",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-raster-schema-first-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "db5c1f324b58aede6d0b9a00ac517bf6a39110940441bfa0d97fe2835238889c",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-real-llm-01.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "7ad6b1a295da65e4a3d39f28fd0e55384753ce72c89118e1a9c90315ce5dd1e2",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-schema-attributes-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "ae35d4ff11ccf5f31421e41eef091af6212f7b0d58a940918775ee72d909ddf4",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-vector-batch-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "d2e9ab67b30e62bb92d800cfc47baeb1060f2f0b948a32204b278bc0027e0141",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/retest-vector-fixed-2026-08-10.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "dc9e43fec67ddab694750451912b852ef1600bfb3641d07482cb6ec69595a03f",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_RP06_FINAL.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "03aa395f1b70e8f7225f7f12d76d11cf6f4b2cffaa5ce851499176196a3d84cb",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_FINAL.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "ec43d08a7fe429db5ee4bd43452b381d133bba54bb985ea03c30e6edfec3c930",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_FINAL2.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "92d0fda9d155541866777b6f088c41be8c2abd108f4793be452609d4991776a6",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_FINAL3.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a2888bba34e85b58dd08c28479c85d78496bbde5714923808f646df5965d5fb5",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_REPEAT_RP01_RP05_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "f5dfcd1834095facd9576d77bfd2c95a764830823772ef77ddde3335e0960310",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP01_RP02_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "1517dd5381a6c8d95745579c1c50d833280b45779bcd6bde139e8a1b7267faf9",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP01_RP02_AFTER_FIX_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "f20058e3b9c30d3c6dca532300a15b9b73e3f6eff5074249989d74158b4b6191",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP03_AFTER_PLANNER_FIX_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "668a70a58b104a24ded66062cbe2b6943391535e9199129317706950d87c2f15",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP03_RP04_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "4922f9121d3651a9236fc79b36059aeddffd8850eae3fd073bd66482d28a42f5",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP05_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "ce1c6eaf64289f155e2aa2eff156d957e5dcf0e74ca4473e8dbf32935e4d1b1d",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP05_AFTER_RASTER_FIX_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "a9d2bf41066609e2aa46c797bc56f9920c02ae5d350ba1fb904ba216bb6f4858",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP06_RP07_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "1d6e14d58326275b1335d76d1b55cf718d64dece8dfa81d229471fb02e749ae7",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/ROOT_PLANNER_SYNONYM_SMOKE_RP06_VALID_CONTEXT_20260825.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "579893e2acb3f5a0fb20faa394f15c740dbca0ddb5359803b7cf59996a732582",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/server-current.stderr.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "88de97b3c3dadaeaf49a77cc83e48bb0d020d5eaa78310542e3dc8aa0ed650bb",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results/server-current.stdout.log",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "58364af400ebbbb8b6f94074b95abb05999e08201e08300baba18c18d57e3098",
+      "approved": true
+    },
+    {
+      "path": "blackbox/__pycache__/prompt_matrix_200.cpython-313.pyc",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "5490bcea2dcf88d23321ede58fba48659c79c2d436341535b2748d834e6547e6",
+      "approved": true
+    },
+    {
+      "path": "blackbox/__pycache__/real_llm_prompt_suite.cpython-313.pyc",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "451e28bdc7073d03ef748da2fc2b34cec9bf21455914e3248fe38e795eb53308",
+      "approved": true
+    },
+    {
+      "path": "blackbox/__pycache__/root_planner_synonym_suite.cpython-313.pyc",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "02bc7968242ee49d646cb1780659ae98973fb83c4f485f7f21b2a834eb13a169",
+      "approved": true
+    },
+    {
+      "path": "blackbox/prompt_matrix_200.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "42e8f90f57c314eaa8ad6db0ac22a7f4331cbdd57c8ecb18434d8efe5e6bcc24",
+      "approved": true
+    },
+    {
+      "path": "blackbox/real_llm_prompt_matrix_200.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "3f84d876162c96e32cb0eb8cfd5b77545bcd0907837c30de2140867c89ecef41",
+      "approved": true
+    },
+    {
+      "path": "blackbox/real_llm_prompt_suite.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "aaaabd16bfcf37d7225c7a7f3dee305f7fcedb550062add76dd5a2777bdcbb88",
+      "approved": true
+    },
+    {
+      "path": "blackbox/root_planner_synonym_cases.json",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "d4db34f1db04416cb2d461f533d883d5faa6a4ac4c27ee5494cf4e2ab851af00",
+      "approved": true
+    },
+    {
+      "path": "blackbox/root_planner_synonym_suite.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "sha256": "7a809db4af2bfc8d0da82dd61fe8612cb7fe752ea09623bfbec19a7ebeb148bd",
+      "approved": true
+    },
+    {
+      "path": "frontend/snapshot_themes.py",
+      "category": "legacy-evidence",
+      "replacement_evidence": "frontend runtime UI tests",
+      "sha256": "32c08564fbc71c97197eb68b23f1060bc5cf27258f91a8e1ce06724c41579b50",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/.matrix-fixtures-0y6vt3f7",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\.matrix-fixtures-0y6vt3f7",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/.matrix-fixtures-60z7iede",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\.matrix-fixtures-60z7iede",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/.matrix-fixtures-76hlpxwb",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\.matrix-fixtures-76hlpxwb",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-final",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-final",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-final2",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-final2",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-final3",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-final3",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-full-temp-20260825",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-full-temp-20260825",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-raster-output-red",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-raster-output-red",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-router-green",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-router-green",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-semantic-full",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-semantic-full",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-semantic-full-20260825",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-semantic-full-20260825",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-semantic-full-final",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-semantic-full-final",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "blackbox-results.blocked/pytest-semantic-full-release",
+      "absolute_path": "C:\\Users\\Mao\\Desktop\\Gismind\\blackbox-results.blocked\\pytest-semantic-full-release",
+      "target_kind": "directory_recursive",
+      "category": "legacy-evidence",
+      "replacement_evidence": "app.runtime SQLite/CAS Runtime and runtime contract tests",
+      "verification": "Exact directory under blackbox-results.blocked; ACL was verified before deletion.",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/integration/conftest.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/integration/test_agent_loop.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/integration/test_sub_agent_loop.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/context_budget.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "55f0845f8081bd9c4fd68dda096d77ed0ad0383f182705db8dbf089ed53038e1",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/cost.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "8a0e54d68bd2ae132926876bd3c3b4215b61bc5176a38152be2c4ded742da815",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/duplicate_guard.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "aa291437836335c133d98761c0b4f517ac795af966ed089cd938fec735df460c",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/metrics.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "e66746c54b2f6bc5573f0c8b3c3def41fa610d44c6e1286e96c3773fc8891ab6",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/native_tool_mode.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "2677a3815fe47ab4d8eebd1c4e4b34762cee43574c75cb47c8f3fbc888670108",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/planner_helpers.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "57c7f01b9415d2ca0514ac7703247905e2671dfa895f8b7d202a08aaa7904f1f",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/registry.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "38724b7a3487e17ae3fc23df5f1f229ed8fcbfb6fbe3c2fec1de2eced3c146e3",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/schemas.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "be2d1202bf498f1554b1fc68a7fd5daff16de56332405005beae4eca3b15ded8",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/session_memory.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "84153985be5daa0f6912cb8a38f2930bc1a04df4645ae7cc4d69119f13a18e1e",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "c2b09bbd7c4215719d1d391b30cbb2b8d73b74d377ca65750d54f10039bdff00",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/ast_guard.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "1e00f95425b5e3fbd6207f9f4c0a5f758cb30894b66ac0f4f313658a0d7d76b2",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/executor.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "1d468213b11cc0dd0da371726176e797c39a4b9bccd02a95fc399d19f7f95ac6",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/namespace.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "9508c0339135950e00f9fe967807b7f654ee18a04e201fb1aeb44c70b21e76e0",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/sandbox_runner.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "017651e1ce31a2833be2d3bdde25f1b4af5eae3455cb97d2530c30fb18c6531d",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/code_mode/types.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "a898b42650b66ba44e43d1a78dfcc91d412d3ff1e1057085d0795444f62794fe",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/hooks/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "01e51751abec43ce519ea44b5911986ef8c411e748a82f692e2fe00e6e85b7d7",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/hooks/builtins.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "924988dfbeacec2829e532e3c54c5e124caa87c52f33ca8247a77db3ed578377",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/hooks/contexts.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "9d8855a60e4a8e2506cd7caa3673dcda5badb00941cbfb2015887fe01539c4ca",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/hooks/pipeline.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "66618210e95a2e0d810276134ab511a2d8946496cf8012162cacaa6512937de8",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "da564be40b8e37a5618c974b125a89c536642f1fe9409c3abf5d33a58d174b12",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/postflight.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "59d2255a4b5c278e430e68f4d22cbbefd97848b7b8b5cf8651d2e9297ee27064",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/registry.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "380b34c845baa29f2d5ecdf85ab74a23647e8f699e0c470f5b58f76c4b6cec22",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_buffer.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "ceea32cbf08a4de5c25a095905d849a117a5687647b23a4d28904bcf1dd6b0ff",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_io.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "5e4a4d335bb8cab4dac3987f3bf3a0e0e0ba4cf29ca6cd8f61e52496aa2176f5",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_layer.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "801b96de1c796e533d0c2ca811da5dd175a038e3377eacea2b523a4613f7c0cc",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_overlay.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "fbb1ee2164d7f4e0bb727359f9cd8b7c39a957ddb4abb44847ad347f1270ed03",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_overwrite.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "5e1e607483012371ecc57c73a802b6f473ecc1cb09b6cae8c9031f27d1162ad6",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_raster.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "3d89a5ce9b9c9a8be20fab90dcf8c23040213c40657a3b107669577018b232d1",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/rules_vector.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "a3f4c5d350691a423dd2e5c359e440dceafb9fb868cb7c652bacf0fa8d9bf277",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/runner.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "22cfc13522ba5059250d63f11d3ddce22cbb7878de7aa4eb567f0759af4d703d",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/preflight/validation.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "34d55cba79a12045d3dc3df6151a3acdeaccec982b77f36c5172aaa5f7ad9a4a",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/coder.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "d1487c2c5bdd0d065cdf492eb8bc0cef66697b8160195b7d6cd14467cf275b11",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/dispatcher.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "562527ffcd5ebac1dbb3e2358a325db55bb6a6593fccca17ba151ec41bb51f16",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/geo.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "e01f9cb5088354f450e603c0bbfaf1393b6fc2df5018ead65014ada2489f6e40",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/geometer.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "113f8e64b3332540e2cc9a00aed09756e6e3c18da672564f0842763934817d76",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/poi.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "f95c7d708e61c6411a5cff520dd441b4afdff9e431def00123a9cd356766be03",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/verifier.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "a726e1b63f8f043b2463a5d8da9d8d6239866701a986d5fbeac121f9d57fddc6",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/prompts/viz.md",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "0ccb9e9ca2247a4a62731f845aaa7395d11ab011157dde12bcaed71e6c3f2700",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/risks/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "476ad53b09d12edb006471100d0b2665efd1838a3feb8b0ea521f2fd110f1945",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/risks/models.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "2465be1f9db634f8498ff5daa5ebcd4eb2a7c72188b9ea117762f5c9afecfcb0",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/risks/policy.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "7e2bbf92e1bbcd2669825a3ae2c2ebd79fe81f86d2156aa8f4ad019f177d54dd",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/risks/taxonomy.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "cb62f9488af5be8c8adf8afd03e6cf57560011c11d99ee84ab38b66b6db49d4d",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/skill/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "c62822b630b91da38bccf2cc28dc8e9797ab919684905154f92bd25d17bad488",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/skill/registry.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "f1096ec0d593a9f89cd8cadf8f13e82f9a3bbcf8967aee1357a6a24ad8d3c899",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/toolkit/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "ef7ffd2013fc65e8336bef643104382995577ee693cbefa5d0d5dc7f15889c8c",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/toolkit/registry.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "9402dab6e342a1dcadc5e46aa87184f5525288aa6007d7e3a9ff9d014c3aad67",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/workspace/__init__.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "fb484dde009f26ae14492f61eafb5e7b0aa6921ef7eb6a1bf04491b84821bf0b",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/workspace/layer_record.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "4e4e5ff2cdfd4d6f7cbe848235763a16c32875a203134258c709b1d9cc7b6011",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/workspace/resolver.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "1c68cd52000b7b513bc5ac7475096cd81cdcf153abff3ade6a6c959c134abcd8",
+      "approved": true
+    },
+    {
+      "path": "backend/app/agents/workspace/state.py",
+      "category": "legacy-agent",
+      "replacement_evidence": "app.runtime planner/compiler/executor and Runtime contract tests",
+      "sha256": "488e8d88f680036913d431dd3e68894d7a3efcfa89b883e11d30c5732f2a5fb0",
+      "approved": true
+    },
+    {
+      "path": "backend/scripts/e2e_awaiting_server.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "7467aa6f3b32cd50765e23cf275ad262dd8237438580dda404a30752d22d6308",
+      "approved": true
+    },
+    {
+      "path": "backend/scripts/e2e_component_server.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "53fa241fa30e05c399f9247f95b342ff6e731a6e0e14561fe155d7f423dfda15",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/integration/test_guardrail_pipeline.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "dd53a3fc714f107f8c1f71a562b6024c6469da367995044608611981a65eb6c7",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_cost.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "e22a2076186e30c09056d6f63efdc4fd7f913c9079c11ce3311d7de66f54477f",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_code_mode_ast_guard.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "ccc897186e51d8c25823bd187b6a430c1edb1129db2d7645299d95478c5c0a36",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_code_mode_state.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "369f21c1800959db0b5face6ceeafb436a456dd1bafcac8bff90e07c096fc3fe",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_kernel_always_visible.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "e24323a1eba9290cc08778d50188e6c21fc62a7727513c9e109f1b36cd3b35e2",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_metrics.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "eae42b5690303a2a96ec74cdb39e38b9d5fe6be0c90328c7aa40feb7365a2f08",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_buffer_crs.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "3b100343e4ebba7b6a671edb8ee6cbb456e39bf7dc128b3b8d31570b4b0fb24d",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_no_io.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "056a9536db6da3829583a59c44e514c13db922c9536548ec925689d29c409aa6",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_overlay.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "65717325ed962027a6bbeba9c6e2b4bcf2e76e46a05df44856d8a38d95e701b3",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_postflight_warnings.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "ca7b02f09c414d82828160bd6fd6fb29ef0ee9e2f70621d89260b19a6102bf7c",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_rules_io.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "93124b4045ebbe60c06e0ab6b6a3a94069591add5a59d5194bb8b57a4a954446",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_rules_raster.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "06a2c119321d7d4ffe56c53141bc18619e28479013cf59ca0597fea4b7302056",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_preflight_rules_vector.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "b0acccf1c663554292b416a8cd2a41043a5f87c0aeb8d846d39a40efbf5f996c",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_registry.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "d3327f41ad23579e8c4121581a946d9b22991a8c68a56c5ff4bf303b3377164f",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_skill_loading.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "2d9873bac9352522079f934f9b1395e37c20ddc31bf8787ec0688edc60a89f22",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_toolkits_yaml.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "136cb15d27312d40ea5db4548aa9a4133d75abee2f6345ab59466a2507c96e7f",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/unit/test_workspace_state.py",
+      "category": "legacy-test",
+      "replacement_evidence": "app.runtime tests",
+      "sha256": "6d7ae2269d635d403f6b685d0b3dce9d672a4dcb3392cbd5d444a22e9cd1f608",
+      "approved": true
+    },
+    {
+      "path": "backend/app/api/memory.py",
+      "category": "late-discovered-v1-api",
+      "replacement_evidence": "app.api.runtime session and run projections",
+      "approved": true
+    },
+    {
+      "path": "backend/app/api/sessions.py",
+      "category": "late-discovered-v1-api",
+      "replacement_evidence": "app.api.runtime session and message projections",
+      "approved": true
+    },
+    {
+      "path": "backend/app/models/__init__.py",
+      "category": "late-discovered-v1-model",
+      "replacement_evidence": "app.runtime contracts and API request models",
+      "approved": true
+    },
+    {
+      "path": "backend/app/models/schemas.py",
+      "category": "late-discovered-v1-model",
+      "replacement_evidence": "app.runtime contracts and API request models",
+      "approved": true
+    },
+    {
+      "path": "backend/app/sandbox/tools.py",
+      "category": "late-discovered-v1-tool-wrapper",
+      "replacement_evidence": "app.runtime.code_mode and RuntimeExecutor",
+      "approved": true
+    },
+    {
+      "path": "backend/app/sandbox/__init__.py",
+      "category": "late-discovered-v1-tool-wrapper",
+      "replacement_evidence": "app.runtime.code_mode and RuntimeExecutor",
+      "approved": true
+    },
+    {
+      "path": "backend/app/runtime/migrate_legacy_state.py",
+      "category": "obsolete-redis-migration",
+      "replacement_evidence": "Runtime SQLite/CAS is the sole fact store after hard cutover",
+      "approved": true
+    },
+    {
+      "path": "backend/app/tools/policy.py",
+      "category": "late-discovered-v1-policy",
+      "replacement_evidence": "ToolContract retry, fallback, cache, and resource policies",
+      "approved": true
+    },
+    {
+      "path": "backend/workspace/run_tool_prompts.py",
+      "category": "legacy-llm-evidence",
+      "replacement_evidence": "Runtime contract and future live-action evaluation suites",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/support/__init__.py",
+      "category": "legacy-mock-support",
+      "replacement_evidence": "Runtime tests construct PlannerDraft and use deterministic handlers only",
+      "approved": true
+    },
+    {
+      "path": "backend/tests/support/deterministic_llm.py",
+      "category": "legacy-mock-support",
+      "replacement_evidence": "Runtime tests construct PlannerDraft and use deterministic handlers only",
+      "approved": true
+    },
+    {
+      "path": "frontend/e2e/awaiting-input.spec.ts",
+      "category": "legacy-browser-e2e",
+      "replacement_evidence": "Runtime API and event-replay integration tests",
+      "approved": true
+    },
+    {
+      "path": "frontend/e2e/component_prompts_e2e.py",
+      "category": "legacy-browser-e2e",
+      "replacement_evidence": "Runtime API and event-replay integration tests",
+      "approved": true
+    },
+    {
+      "path": "frontend/e2e/fixtures/nanjing_points.geojson",
+      "category": "legacy-browser-evidence",
+      "replacement_evidence": "Runtime tests generate temporary GIS inputs",
+      "approved": true
+    },
+    {
+      "path": "frontend/e2e/stable-wiring.spec.ts",
+      "category": "legacy-browser-e2e",
+      "replacement_evidence": "Runtime API and event-replay integration tests",
+      "approved": true
+    },
+    {
+      "path": "frontend/playwright.config.ts",
+      "category": "legacy-browser-e2e-config",
+      "replacement_evidence": "Future browser tests must target the Runtime API directly",
+      "approved": true
+    },
+    {
+      "path": "frontend/src/components/ThinkingCollapse.tsx",
+      "category": "legacy-agent-ui",
+      "replacement_evidence": "TraceTimeline projects persisted Runtime events",
+      "approved": true
+    },
+    {
+      "path": "frontend/src/hooks/useSSE.ts",
+      "category": "legacy-chat-sse",
+      "replacement_evidence": "useRuntimeRun replays Runtime event envelopes",
+      "approved": true
+    },
+    {
+      "path": "frontend/src/lib/toolLabels.ts",
+      "category": "legacy-agent-ui",
+      "replacement_evidence": "Runtime events carry operation names from ToolContracts",
+      "approved": true
+    }
+  ]
+}
