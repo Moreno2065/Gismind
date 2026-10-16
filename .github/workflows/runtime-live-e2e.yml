@@ -47,7 +47,7 @@ jobs:
       GISMIND_LIVE_SUITE: ${{ inputs.suite }}
       GISMIND_RESERVATION_USD: ${{ inputs.reservation_usd }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v6
