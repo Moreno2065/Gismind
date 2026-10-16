@@ -681,6 +681,11 @@ def _make_method(operation: str, method: str, keys: tuple[str, ...]):
         # positional GeoDataFrames; all other compiler-approved fields must
         # reach the GIS implementation unchanged.
         parameters = {name: value for name, value in kwargs.items() if name not in keys}
+        if operation in {"attribute.rename_field", "attribute.keep_fields", "attribute.filter",
+                         "vector.clip", "vector.extract_location", "vector.point_on_surface"}:
+            # These operations use topology/attributes in the input CRS. A
+            # display-datum round trip would alter unchanged coordinates.
+            parameters["preserve_input_crs"] = True
         return _call(
             _ctx(operation, kwargs), method, *values,
             output_crs=_vector_crs(kwargs.get(keys[0]), values[0]),

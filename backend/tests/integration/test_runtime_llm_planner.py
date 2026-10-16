@@ -98,17 +98,17 @@ def test_provider_request_does_not_mislabel_ordinary_schema_as_strict(monkeypatc
         def __init__(self, *args, **kwargs):
             pass
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *args):
+        async def __aexit__(self, *args):
             return None
 
-        def post(self, endpoint, *, json, headers):
+        async def post(self, endpoint, *, json, headers):
             posted.append(json)
             return Response()
 
-    monkeypatch.setattr("app.runtime.llm_planner.httpx.Client", Client)
+    monkeypatch.setattr("app.runtime.llm_planner.httpx.AsyncClient", Client)
     planner = OpenAICompatiblePlanner(
         api_key="key", base_url="https://provider.invalid/v1", model="model",
         timeout_seconds=1, max_tokens=512, max_retries=0,
@@ -141,17 +141,17 @@ def test_provider_request_has_one_bounded_json_object_compatibility_fallback(mon
         def __init__(self, *args, **kwargs):
             pass
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *args):
+        async def __aexit__(self, *args):
             return None
 
-        def post(self, endpoint, *, json, headers):
+        async def post(self, endpoint, *, json, headers):
             posted.append(json)
             return Response(400 if len(posted) == 1 else 200)
 
-    monkeypatch.setattr("app.runtime.llm_planner.httpx.Client", Client)
+    monkeypatch.setattr("app.runtime.llm_planner.httpx.AsyncClient", Client)
     planner = OpenAICompatiblePlanner(
         api_key="key", base_url="https://provider.invalid/v1", model="model",
         timeout_seconds=1, max_tokens=512, max_retries=0,
@@ -182,19 +182,19 @@ def test_provider_retries_reasoning_only_200_response_with_json_object(monkeypat
         def __init__(self, *args, **kwargs):
             pass
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *args):
+        async def __aexit__(self, *args):
             return None
 
-        def post(self, endpoint, *, json, headers):
+        async def post(self, endpoint, *, json, headers):
             posted.append(json)
             if len(posted) == 1:
                 return Response({"choices": [{"message": {"content": "", "reasoning_content": "hidden"}}]})
             return Response({"choices": [{"message": {"content": "{}"}}]})
 
-    monkeypatch.setattr("app.runtime.llm_planner.httpx.Client", Client)
+    monkeypatch.setattr("app.runtime.llm_planner.httpx.AsyncClient", Client)
     planner = OpenAICompatiblePlanner(
         api_key="key", base_url="https://provider.invalid/v1", model="model",
         timeout_seconds=1, max_tokens=512, max_retries=0,

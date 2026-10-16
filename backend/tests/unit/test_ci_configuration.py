@@ -43,24 +43,42 @@ def test_paid_live_ci_is_explicit_separate_and_fails_without_credentials():
     assert "DEEPSEEK_API_KEY" in secret_steps[0]["env"]["LLM_API_KEY"]
 
 
-def test_paid_ci_offers_real_robustness_cohort_with_same_budget_and_evidence_guards():
+def test_paid_ci_offers_browser_and_robustness_with_same_budget_and_evidence_guards():
     workflow = yaml.load((ROOT / ".github/workflows/runtime-live-e2e.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert inputs["suite"]["options"] == ["prompt2000", "robustness"]
+    assert inputs["suite"]["options"] == ["browser", "prompt2000", "robustness"]
+    assert inputs["suite"]["default"] == "browser"
     job = workflow["jobs"]["live"]
     assert job["env"]["GISMIND_LIVE_SUITE"] == "${{ inputs.suite }}"
     steps = job["steps"]
     live = next(step for step in steps if step.get("name") == "Execute live API and semantic gates")
     command = live["run"]
-    assert 'if [ "$GISMIND_LIVE_SUITE" = "robustness" ]' in command
+    assert 'if [ "$GISMIND_LIVE_SUITE" = "browser" ]' in command
+    assert 'elif [ "$GISMIND_LIVE_SUITE" = "robustness" ]' in command
+    assert "tests.browser.runtime_chinese_browser --live" in command
+    assert '--limit "$GISMIND_CASE_COUNT"' in command
+    assert '--budget-db .gismind/live-ci-budget.sqlite' in command
+    assert '--cache-hit-usd-per-million 0.006' in command
     assert "tests.live.runtime_robustness_smoke --live" in command
     assert '--max-cost-usd "$GISMIND_RESERVATION_USD"' in command
     assert "--input-usd-per-million" in command and "--output-usd-per-million" in command
     inventory = next(step for step in steps if step.get("name") == "Validate robustness corpus without spending quota")
     assert inventory["run"] == "python -m tests.live.runtime_robustness_smoke --inventory"
     assert "env" not in inventory
+    browser_inventory = next(step for step in steps if step.get("name") == "Validate browser inventory without spending quota")
+    assert browser_inventory["run"] == "python -m tests.browser.runtime_chinese_browser --inventory"
+    assert browser_inventory["if"] == "inputs.suite == 'browser'"
+    assert "env" not in browser_inventory
+    browser_setup = next(step for step in steps if step.get("name") == "Install real browser prerequisites")
+    assert browser_setup["if"] == "inputs.suite == 'browser'"
+    assert "python -m playwright install --with-deps chromium" in browser_setup["run"]
+    assert "npm ci --prefix ../frontend" in browser_setup["run"]
     upload = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
-    assert upload["with"]["path"].strip() == "backend/.gismind/live-ci/"
+    assert upload["with"]["path"].strip().splitlines() == [
+        "backend/.gismind/live-ci/", "backend/.gismind/live-ci-budget.sqlite*",
+    ]
+    assert inputs['reservation_usd']['options'] == ['2', '10']
+    assert int(job['timeout-minutes']) >= 300
 
 
 def test_frontend_ci_writes_junit_without_losing_console_reporter():
@@ -153,6 +171,9 @@ def test_ci_lock_pins_and_hashes_the_reachable_dependency_closure():
             assert direct.extras <= pinned.extras
     assert str(locked["starlette"].specifier) == "==0.52.1"
     assert str(locked["anyio"].specifier) == "==4.10.0"
+    assert str(locked["playwright"].specifier) == "==1.63.0"
+    assert str(locked["pyee"].specifier) == "==13.0.1"
+    assert str(locked["greenlet"].specifier) == "==3.5.6"
     assert not {"conda", "anaconda", "torch", "hydra-core", "langsmith"} & locked.keys()
     assert locked["pywin32"].marker.evaluate({"sys_platform": "win32"})
     assert not locked["pywin32"].marker.evaluate({"sys_platform": "linux"})

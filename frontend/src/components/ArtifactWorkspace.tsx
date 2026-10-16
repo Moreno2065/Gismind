@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getRuntimeArtifact, getRuntimeArtifactContent, runtimeArtifactContentUrl } from '@/api/client';
 import { projectRuntimeMapLayer, type RuntimeMapDisplay } from '@/lib/runtimeMapProjection';
-import type { ArtifactSummary } from '@/types/runtime';
+import type { ArtifactSummary, RunTaskProjection } from '@/types/runtime';
 import { LazyMapView } from './LazyMapView';
+import { runtimeTaskAnchor } from './TaskExecutionDetails';
 
 interface ArtifactWorkspaceProps {
   artifacts: ArtifactSummary[];
   onUse: (artifact: ArtifactSummary) => void;
   disabled?: boolean;
+  preferredArtifactId?: string | null;
+  resultRunId?: string | null;
+  tasks?: RunTaskProjection[];
 }
 
 type JsonObject = Record<string, unknown>;
@@ -129,11 +133,13 @@ function previewFor(artifact: ArtifactSummary, content: unknown): Preview {
   return result;
 }
 
-export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: ArtifactWorkspaceProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferredArtifactId, resultRunId, tasks = [] }: ArtifactWorkspaceProps) {
+  const [selection, setSelection] = useState<{ id: string; runId?: string | null } | null>(null);
   const [retry, setRetry] = useState(0);
   const [loaded, setLoaded] = useState<LoadedArtifact | null>(null);
-  const summary = artifacts.find(artifact => artifact.artifact_id === selectedId) ?? artifacts[0];
+  const selectedId = selection?.runId === resultRunId ? selection?.id : null;
+  const summary = artifacts.find(artifact => artifact.artifact_id === selectedId)
+    ?? artifacts.find(artifact => artifact.artifact_id === preferredArtifactId) ?? artifacts[0];
   const currentId = summary?.artifact_id;
   const current = loaded?.id === currentId ? loaded : null;
   const selected = useMemo(() => current?.artifact ? { ...summary, ...current.artifact } : summary, [summary, current?.artifact]);
@@ -163,6 +169,7 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: Artifa
 
   const preview = useMemo(() => selected ? previewFor(selected, current?.content) : null, [selected, current?.content]);
   const fields = selected ? schemaFields(selected) : [];
+  const producer = tasks.find(task => task.task_id === selected?.producer_task_id);
   const isLoading = Boolean(currentId && (!current || current.loading));
 
   if (!selected) return <section className="flex min-h-[380px] flex-1 flex-col items-center justify-center px-6 py-12 text-center" aria-label="成果工作区">
@@ -173,7 +180,7 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: Artifa
     <div className="mt-8 flex items-center gap-4 font-mono text-[10px] tracking-wider text-ink-500"><span>数据</span><span aria-hidden="true" className="h-px w-7 bg-ink-700" /><span>分析</span><span aria-hidden="true" className="h-px w-7 bg-ink-700" /><span>成果</span></div>
   </section>;
 
-  return <section aria-label="成果工作区" className="flex min-h-0 min-w-0 flex-col text-ink-200">
+  return <section aria-label="成果工作区" data-artifact-id={selected.artifact_id} data-result-run-id={resultRunId ?? undefined} className="flex min-h-0 min-w-0 flex-col text-ink-200">
     <header className="flex items-center justify-between gap-3 px-5 pb-3 pt-5 sm:px-6">
       <div className="flex items-baseline gap-3"><h2 className="font-display text-lg text-ink-100">空间成果</h2><span className="font-mono text-[10px] tracking-widest text-ink-500">COLLECTION</span></div>
       <span className="font-mono text-sm tabular-nums text-amber">{String(artifacts.length).padStart(2, '0')}</span>
@@ -182,7 +189,7 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: Artifa
       {artifacts.map((artifact, index) => {
         const active = artifact.artifact_id === currentId;
         const item = active ? selected : artifact;
-        return <button key={artifact.artifact_id} type="button" aria-label={`选择成果 ${artifactName(item)}`} aria-pressed={active} onClick={() => setSelectedId(artifact.artifact_id)} className={`group flex w-48 shrink-0 items-start gap-3 border px-3 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber ${active ? 'border-amber/55 bg-amber/[0.06]' : 'border-ink-700 bg-ink-950/30 hover:border-ink-500 hover:bg-ink-800/50'}`}>
+        return <button key={artifact.artifact_id} type="button" data-artifact-id={artifact.artifact_id} aria-label={`选择成果 ${artifactName(item)}`} aria-pressed={active} onClick={() => setSelection({ id: artifact.artifact_id, runId: resultRunId })} className={`group flex w-48 shrink-0 items-start gap-3 border px-3 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber ${active ? 'border-amber/55 bg-amber/[0.06]' : 'border-ink-700 bg-ink-950/30 hover:border-ink-500 hover:bg-ink-800/50'}`}>
           <span className={`mt-0.5 font-mono text-[10px] tabular-nums ${active ? 'text-amber' : 'text-ink-500'}`}>{String(index + 1).padStart(2, '0')}</span>
           <span className="min-w-0"><span className="block truncate text-xs font-medium text-ink-200" title={artifactName(item)}>{artifactName(item)}</span><span className="mt-1.5 block font-mono text-[9px] tracking-wide text-ink-400">{item.type} <span aria-hidden="true" className="mx-1 text-ink-600">/</span> {formatSize(item)}</span></span>
         </button>;
@@ -198,7 +205,8 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: Artifa
         <Metadata label="坐标系" value={formatCRS(selected)} />
         <Metadata label="文件大小" value={formatSize(selected)} />
         <Metadata label="验证状态" value={selected.validation_status === 'valid' ? '已验证 · valid' : selected.validation_status ?? '未提供'} />
-        <Metadata label="来源任务" value={selected.producer_task_id ?? (selected.origin === 'upload' ? '用户上传' : '未提供')} wide />
+        {producer ? <div className="col-span-2 min-w-0"><dt className="mb-1.5 text-[10px] text-ink-500">来源任务</dt><dd className="break-all text-[11px] leading-5"><a href={`#${runtimeTaskAnchor(producer.task_id)}`} className="text-amber underline decoration-amber/40 underline-offset-4 focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber">{producer.task_key}</a><span className="mt-1 block font-mono text-[9px] text-ink-500">{producer.task_id}</span></dd></div>
+          : <Metadata label="来源任务" value={selected.producer_task_id ?? (selected.origin === 'upload' ? '用户上传' : '未提供')} wide />}
         <Metadata label="媒体类型" value={selected.media_type ?? '未提供'} />
       </dl>
 
@@ -208,7 +216,7 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false }: Artifa
 
       {!isLoading && !current?.error && <div>
         <div className="flex items-center justify-between"><h4 className="font-mono text-[10px] tracking-wider text-ink-400">空间预览</h4>{preview?.map && <span className="text-[10px] text-ink-500">地图显示副本 · GCJ02</span>}</div>
-        {preview?.map && <LazyMapView key={selected.artifact_id} layers={preview.map.layers} bbox={preview.map.bbox} />}
+        {preview?.map && <LazyMapView key={selected.artifact_id} layers={preview.map.layers} bbox={preview.map.bbox} sourceArtifactId={selected.artifact_id} />}
         {preview?.note && <div className="mt-3 flex items-start gap-3 border border-ink-700/80 bg-ink-900/40 px-4 py-5"><svg aria-hidden="true" className="mt-0.5 shrink-0 text-ink-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="3" y="3" width="18" height="18" rx="1" /><path d="M3 9h18M9 3v18M15 3v18M3 15h18" /></svg><p className="text-xs leading-6 text-ink-400">{preview.note}</p></div>}
         {!preview?.map && !preview?.note && !preview?.rows.length && <p className="mt-3 border border-ink-700/70 px-4 py-5 text-xs leading-6 text-ink-400">此格式暂不支持浏览器预览，可下载原始成果。</p>}
       </div>}

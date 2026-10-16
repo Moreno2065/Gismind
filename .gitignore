@@ -79,3 +79,7 @@ PineFlow-main/
 
 # Codex 临时 Git 同步目录
 .codex-git-sync/
+
+# Temporary Runtime clones produced by standalone map acceptance controls.
+/tools/map_acceptance/.test-tmp/
+/tools/map_acceptance/.local/

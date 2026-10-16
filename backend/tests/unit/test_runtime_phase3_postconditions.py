@@ -44,9 +44,11 @@ def test_buffer_postcondition_rejects_silent_or_non_geometric_output():
 
 def test_buffer_postcondition_checks_distance_metadata_when_present():
     from app.runtime.postconditions import validate_vector_buffer
+    from app.runtime.tool_handlers import handle_vector_buffer
 
     inputs = {"vector": {"data": _fc([_feature({"type": "Point", "coordinates": [0, 0]})])}}
-    good = {"status": "success", "data": {**_fc([_feature({"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]})]), "buffer_distance_m": 100}}
+    good = handle_vector_buffer(**inputs, distance_m=100)
+    good["data"]["buffer_distance_m"] = 100
     bad = {"status": "success", "data": {**good["data"], "buffer_distance_m": 101}}
     assert validate_vector_buffer(result=good, inputs=inputs, params={"distance_m": 100}) is True
     assert validate_vector_buffer(result=bad, inputs=inputs, params={"distance_m": 100}) is False

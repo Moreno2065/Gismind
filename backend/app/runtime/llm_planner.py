@@ -8,6 +8,7 @@ draft behind a SQLite planning lease afterwards.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -23,9 +24,11 @@ import httpx
 
 from .contracts import ArtifactRef, TaskOutputRef, PlannerDraft, ToolContract, ToolContractRegistry
 from .planner import PlanDraftInvalid, parse_planner_draft
+from .planning_control import PlanningBudget, current_planning_budget
 from .task_schema import contract_task_template, planner_draft_schema, validate_catalog_tasks
+from .goal_requirements import build_goal_requirements
 
-PROMPT_VERSION = "runtime-planner-2026-10-12.1"
+PROMPT_VERSION = "runtime-planner-2026-10-14.3"
 _MAX_RESPONSE_BYTES = 256 * 1024
 MAX_CATALOG_OPERATIONS = 18
 
@@ -37,6 +40,20 @@ class PlannerError(RuntimeError):
         self.code = code
         self.diagnostics = diagnostics or {}
         super().__init__(message)
+
+
+def _transport_diagnostics(error: Exception | None) -> dict[str, Any]:
+    """Keep bounded exception types, never request URLs or response/error text."""
+    exception_types: list[str] = []
+    seen: set[int] = set()
+    current = error
+    while current is not None and id(current) not in seen and len(exception_types) < 9:
+        seen.add(id(current))
+        exception_types.append(type(current).__name__)
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    exception_type = exception_types[0] if exception_types else "UnknownTransportError"
+    return {"error": exception_type, "exception_type": exception_type,
+            "cause_chain_types": exception_types[1:]}
 
 
 @dataclass(frozen=True)
@@ -76,7 +93,7 @@ def _first_unavailable_artifact_ref(
     return None
 
 
-_RENAME_ACTION = re.compile(r"重新命名(?:为|成)?|重命名(?:为|成)?|更名(?:为|成)?|改名(?:为|成)?|改叫|改用|改成|改为|换成|替换(?:为|成)?")
+_RENAME_ACTION = re.compile(r"重新命名(?:为|成)?|重命名(?:为|成)?|更名(?:为|成)?|改名(?:为|成)?|改叫|改称|改用|改成|改为|换成|替换(?:为|成)?|新标题(?:是|为)")
 _QUOTED_NAME = {"“": "”", "‘": "’", '"': '"', "'": "'"}
 _DISTANCE_WITH_UNIT = re.compile(
     r"(?<![A-Za-z0-9.,，])"
@@ -170,6 +187,11 @@ def _verified_buffer_distance_m(request: PlannerRequest) -> float | None:
 
 
 def _inspected_vector_fields(request: PlannerRequest) -> set[str]:
+    """Return physical attribute names, including a table before conversion.
+
+    A CSV's fields survive csv_to_points; inspecting them does not turn the
+    File into a Vector or waive the compiler's loader/port requirements.
+    """
     if len(request.input_artifacts) != 1:
         return set()
     artifact = request.input_artifacts[0]
@@ -178,10 +200,15 @@ def _inspected_vector_fields(request: PlannerRequest) -> set[str]:
         return set()
     if artifact.get("type") == "File":
         inspection = schema.get("inspection")
-        if not isinstance(inspection, dict) or inspection.get("artifact_type") != "Vector":
+        if not isinstance(inspection, dict):
+            return set()
+        inspected_type = inspection.get("artifact_type")
+        if inspected_type != "Vector" and not (
+            inspected_type == "Table" and inspection.get("source") == "physical_file"
+        ):
             return set()
         fields = inspection.get("fields")
-    elif artifact.get("type") == "Vector":
+    elif artifact.get("type") in {"Vector", "Table"}:
         fields = schema.get("fields")
     else:
         return set()
@@ -277,6 +304,22 @@ def _verified_semantic_facts(request: PlannerRequest) -> dict[str, dict[str, Any
 
 def _semantic_fact_mismatch(request: PlannerRequest, tasks: Sequence[Any]) -> tuple[str, str, str, dict[str, Any]] | None:
     facts = _verified_semantic_facts(request)
+    requirements = build_goal_requirements(request.user_goal,
+        (*request.input_artifacts, *request.prior_artifacts), request.revision_patch)
+    grounded_filters = requirements["conditions"]
+    # The legacy scalar fact is suitable only for a single predicate. Multi-
+    # condition coverage, parameter equality and connected dataflow are checked
+    # together by the compiler; one filter must not be compared to another field.
+    if requirements.get("instruction_groups") or requirements.get("ordered_stages"):
+        # Numbered occurrences are enforced by their own compiler proofs.
+        # A scalar fact must not broadcast one group's correction to another.
+        facts.pop("attribute.filter", None)
+    elif any(item.get("unit_ambiguous") for item in grounded_filters):
+        facts.pop("attribute.filter", None)
+    elif len(grounded_filters) == 1:
+        facts["attribute.filter"] = grounded_filters[0]["params"]
+    elif grounded_filters:
+        facts.pop("attribute.filter", None)
     for task in tasks:
         op = task.get("op") if isinstance(task, dict) else task.op
         key = task.get("task_key", "unknown") if isinstance(task, dict) else task.task_key
@@ -300,7 +343,8 @@ def _semantic_fact_mismatch(request: PlannerRequest, tasks: Sequence[Any]) -> tu
             actual = params
             valid = (params.get("field") == expected["field"] and params.get("operator") == expected["operator"]
                      and isinstance(params.get("value"), (int, float)) and not isinstance(params.get("value"), bool)
-                     and float(params["value"]) == expected["value"])
+                      and float(params["value"]) == expected["value"]
+                      and params.get("negate", False) == expected.get("negate", False))
             path = f"tasks.{key}.params"
             code = "REQUEST_FILTER_MISMATCH"
         if not valid:
@@ -350,6 +394,40 @@ def _verified_rename_binding_in_goal(request: PlannerRequest) -> tuple[str, str]
     if not fields:
         return None
     goal = request.user_goal
+    # Bind quoted literal names inside the rename expression itself. Other
+    # quoted columns in a CSV conversion or earlier filter are not subjects
+    # of this action. These are syntax forms, never corpus-specific names.
+    literal = r'''[“‘"'](?P<{name}>[^“”‘’"'\r\n]+)[”’"']'''
+    source_literal = literal.format(name="source")
+    target_literal = literal.format(name="target")
+    noun = r"(?:字段|列)(?:名|标题)?"
+    quoted_patterns = (
+        rf"{source_literal}\s*(?:(?:的)?{noun})?\s*(?:{_RENAME_ACTION.pattern})\s*{target_literal}",
+        rf"(?:重新命名|重命名|更名)\s*{source_literal}\s*(?:{noun})?\s*(?:为|成)\s*{target_literal}",
+        rf"{source_literal}\s*到\s*{target_literal}\s*的?\s*(?:字段|列)(?:重新命名|重命名|更名)",
+        rf"{source_literal}\s*(?:字段|列)的?新标题\s*(?:是|为)\s*{target_literal}",
+    )
+    quoted_bindings: list[tuple[str, str]] = []
+    quoted_spans: list[tuple[int, int]] = []
+    for pattern in quoted_patterns:
+        for match in re.finditer(pattern, goal):
+            prefix = re.split(r"[，。；,;!！?？\n]", goal[:match.start()])[-1]
+            if (re.search(r"不要|别|无需|不用|禁止|不能|不应", prefix)
+                    or re.search(r"(?:和|与|及|、|或(?:者)?|属性值|字段值|单元格)\s*$", prefix)
+                    or re.match(r'''\s*(?:或(?:者)?|和|与|及|、|/)\s*[“‘"']''', goal[match.end():])):
+                return None
+            source, target = match.group("source", "target")
+            if source not in fields or not target or target == source or target in fields:
+                return None
+            quoted_bindings.append((source, target))
+            quoted_spans.append(match.span())
+    if quoted_bindings:
+        # A scalar fact cannot describe a partial multi-rename request or an
+        # earlier target followed by a correction outside the quoted syntax.
+        if any(not any(start <= action.start() < end for start, end in quoted_spans)
+               for action in _RENAME_ACTION.finditer(goal)):
+            return None
+        return quoted_bindings[0] if len(set(quoted_bindings)) == 1 else None
     actions = list(_RENAME_ACTION.finditer(goal))
     if not actions:
         return None
@@ -576,9 +654,8 @@ class CandidateCatalog(Sequence[dict[str, Any]]):
     def expand(self, registry: ToolContractRegistry, operation_ids: Sequence[str], *, limit: int | None = None) -> "CandidateCatalog":
         """Explicitly add known operations and produce a new hashed catalog.
 
-        Repair/retry paths do not call this method.  Keeping expansion behind
-        this named operation makes any catalog widening observable and binds
-        the resulting draft to a new hash.
+        The controlled repair path calls this only after request authorization
+        and dependency checks, making widening observable through a new hash.
         """
         effective_limit = MAX_CATALOG_OPERATIONS if limit is None else limit
         if not isinstance(effective_limit, int) or isinstance(effective_limit, bool) or effective_limit < 1:
@@ -710,10 +787,11 @@ _PLANNER_HINTS: dict[str, dict[str, Any]] = {
     "raster.vectorize": {"note": "Its input port is a Vector despite the operation name; bind a Vector ArtifactRef."},
     "raster.clip_extent": {"example_params": {"bbox": [0, 0, 1, 1]}, "note": "Use bbox for rectangle clipping; do not bind a mask Vector."},
     "raster.reclassify": {"example_params": {"bins": [0, 10, 20], "values": [1, 2]}},
-    "raster.calculate": {"example_params": {"expression": "raster * 2"}, "note": "Use bare raster for the input array, arithmetic, and allowed NumPy functions such as np.where and np.isnan. Runtime automatically preserves nodata. Do not quote raster as a field name or use ArcGIS IsNull syntax."},
+    "raster.calculate": {"example_params": {"expression": "raster * 2"}, "note": "Use bare raster for the input array, arithmetic, and allowed NumPy functions such as np.where and np.isnan. Runtime automatically preserves nodata. Its Raster output is a physical GeoTIFF available for download directly; retain the requested final Raster without an extra export task. Do not quote raster as a field name or use ArcGIS IsNull syntax."},
     "raster.slope": {"example_params": {"degree": True}},
     "vector.isochrone": {"example_params": {"mode": "driving", "time_min": 15}, "note": "Origin must be the GCJ02 Coordinate Artifact."},
-    "attribute.filter": {"example_params": {"field": "name", "operator": "=", "value": "live"}},
+    "attribute.filter": {"example_params": {"field": "name", "operator": "=", "value": "live"},
+        "note": "Select matching records by default. For explicit exclusion use the original predicate with negate=true: exclude price>300 means operator='>', value=300, negate=true, not operator='<='. Negation complements the matched set, preserving nonmatching/null rows. Do not invent a null-removal policy or combine multiple negated predicates without clear boolean scope."},
     "attribute.keep_fields": {"example_params": {"fields": ["name"]}},
     "attribute.rename_field": {
         "example_params": {"old_name": "name", "new_name": "name_copy"},
@@ -725,7 +803,7 @@ _PLANNER_HINTS: dict[str, dict[str, Any]] = {
     "attribute.calculate": {"example_params": {"field_name": "area_twice", "expression": "$area * 2"}, "note": "Supported expressions are $area (square metres) or $length (metres), optionally multiplied or divided by a numeric constant. Arbitrary attribute arithmetic such as a + b is not supported; ask for clarification for unsupported expressions."},
     "file.export": {
         "example_params": {"format": "geojson"},
-        "note": "Export the actual requested format. Supported managed File formats are geojson and gpkg; never label JSON bytes as CSV or GPKG. Ask for clarification if the requested output format is unsupported or unclear.",
+        "note": "file.export accepts Vector only. Export the actual requested vector format: supported managed File formats are geojson and gpkg; never label JSON bytes as CSV or GPKG. Raster outputs are already physical downloadable GeoTIFF artifacts; keep the final Raster instead of passing it to file.export or inventing a TIFF format here. Ask for clarification if the requested output format is unsupported or unclear.",
     },
     "publish_file": {
         "example_params": {"path": "exports/result.bin"},
@@ -852,6 +930,78 @@ def catalog_hash_for_operation_ids(registry: ToolContractRegistry, operation_ids
     return _make_catalog(names, entries).catalog_hash
 
 
+def _catalog_operation_authorized(contract: ToolContract, request: PlannerRequest) -> bool:
+    """Sensitive operations need positive user intent, including during repair."""
+    if contract.name != "code.execute" and not contract.side_effect:
+        return True
+    goal = "\n".join(filter(None, (request.user_goal, _latest_user_clarification(request)))).lower()
+    positive = re.sub(
+        r"(?:不要|无需|不需要|不用|禁止|避免|\b(?:do not|don't|never|without|avoid)\b)[^，。；,;.!?\n]*",
+        "", goal,
+    )
+    if contract.name == "code.execute":
+        return bool(re.search(
+            r"\bcode\.execute\b"
+            r"|(?:编写|运行|执行|生成|写)\s*(?:(?:一段|一个|自定义)\s*)*(?:python\s*)?(?:代码|脚本)(?!字段|列)"
+            r"|自定义\s*(?:python\s*)?(?:代码|脚本)"
+            r"|(?:用|使用|编写|运行|执行)\s*python\b"
+            r"|\b(?:write|run|execute|use)\s+(?:(?:a|the|custom)\s+)*(?:python|code|script)\b"
+            r"|\bcustom\s+code\b", positive,
+        ))
+    return contract.name.lower() in positive or any(alias.lower() in positive for alias in _ALIASES.get(contract.name, ()))
+
+
+def _expand_request_catalog(registry: ToolContractRegistry, request: PlannerRequest,
+                            base: CandidateCatalog, operation_ids: Sequence[str]) -> CandidateCatalog:
+    names = canonical_operation_ids(registry, operation_ids)
+    eligible = [contract for contract in registry.values() if _catalog_operation_authorized(contract, request)]
+    by_name = {contract.name: contract for contract in eligible}
+    if any(name not in by_name for name in names):
+        raise ValueError("catalog expansion operation is not authorized by the user request")
+    initial_types = {str(item.get("type", "File")) for item in (*request.input_artifacts, *request.prior_artifacts)}
+    # Loaders/converters may bridge supplied types. A repair cannot invent a
+    # new discovery source merely to satisfy a required input type.
+    converters = [contract for contract in eligible if any(port.required for port in contract.input_ports.values())]
+    paths = _shortest_type_paths(converters, initial_types)
+    additions = set(names)
+    for name in names:
+        for port in by_name[name].input_ports.values():
+            if not port.required or any(port.accepts_type(kind) for kind in initial_types):
+                continue
+            candidates = [path for kind, path in paths.items() if port.accepts_type(kind)]
+            if not candidates:
+                raise ValueError("catalog expansion requires an unavailable Artifact type")
+            additions.update(min(candidates, key=lambda path: (len(path), path)))
+    return base.expand(registry, sorted(additions), limit=MAX_CATALOG_OPERATIONS)
+
+
+def controlled_repair_catalog(registry: ToolContractRegistry, request: PlannerRequest,
+                              diagnostic: Mapping[str, Any], *, base: CandidateCatalog | None = None) -> CandidateCatalog:
+    """Expand once from a deterministic compiler diagnostic, never model prose."""
+    catalog = base if base is not None else candidate_catalog(registry, request)
+    details = diagnostic.get("details", {})
+    if not isinstance(details, Mapping):
+        return catalog
+    if diagnostic.get("code") == "GOAL_REQUIREMENT_MISSING":
+        requirement = details.get("requirement")
+        operation = requirement.get("op") if isinstance(requirement, Mapping) else None
+    elif diagnostic.get("code") == "OPERATION_NOT_IN_CATALOG":
+        operation = details.get("operation")
+    else:
+        return catalog
+    if not isinstance(operation, str):
+        return catalog
+    try:
+        canonical = canonical_operation_id(registry, operation)
+        if canonical in catalog.operation_ids:
+            return catalog
+        return _expand_request_catalog(registry, request, catalog, [canonical])
+    except (KeyError, ValueError):
+        # Unknown, unauthorized, unreachable, or over-budget proposals cannot
+        # widen the original boundary or silently evict another operation.
+        return catalog
+
+
 def candidate_catalog(registry: ToolContractRegistry, request: PlannerRequest, *, limit: int = 18) -> CandidateCatalog:
     """Select a deterministic catalog subset without trusting model tool names.
 
@@ -895,6 +1045,7 @@ def candidate_catalog(registry: ToolContractRegistry, request: PlannerRequest, *
     grouped_geometry = mentions(r"(?:类别|属性|分类|字段)相同|相同.{0,4}(?:类别|属性)|同类|按.{0,10}(?:类别|分类|属性|字段)|分组")
     multiple_sources = len(request.input_artifacts) > 1 or mentions(r"两[份组批个张]|多个.{0,4}(?:图层|文件)|第二")
     semantic_matches = {
+        "attribute.rename_field": _verified_rename_binding(request) is not None,
         "vector.buffer": vector_context and distance_context and mentions(r"外扩|向外|扩展|延伸|周围|周边|覆盖|圈出"),
         "vector.multipart_to_singlepart": vector_context and mentions(r"部件|多面|多多边形|复合面|分离|离散") and mentions(r"拆|分成|独立|单独|分别|展开"),
         "vector.dissolve": vector_context and grouped_geometry and mentions(r"合并|融合|合成|(?:消除|抹掉|去除).{0,5}边界"),
@@ -902,31 +1053,17 @@ def candidate_catalog(registry: ToolContractRegistry, request: PlannerRequest, *
         "vector.extract_location": vector_context and boundary_context and whole_features,
         "vector.merge": vector_context and multiple_sources and mentions(r"记录|要素|地块|图层|数据") and mentions(r"追加|拼接|接到|汇到|汇总|集合") and not mentions(r"总数|计数|求和|均值|平均|分组"),
     }
-    # A data column named code or the word geocode is not a request to execute
-    # arbitrary code. Negated coding requests must not expose the escape hatch.
-    code_goal = re.sub(
-        r"(?:不要|无需|不需要|不用|禁止|避免|\b(?:do not|don't|never|without|avoid)\b)[^，。；,;.!?\n]*",
-        "", goal,
-    )
-    explicit_code = bool(re.search(
-        r"\bcode\.execute\b"
-        r"|(?:编写|运行|执行|生成|写)\s*(?:(?:一段|一个|自定义)\s*)*(?:python\s*)?(?:代码|脚本)(?!字段|列)"
-        r"|自定义\s*(?:python\s*)?(?:代码|脚本)"
-        r"|(?:用|使用|编写|运行|执行)\s*python\b"
-        r"|\b(?:write|run|execute|use)\s+(?:(?:a|the|custom)\s+)*(?:python|code|script)\b"
-        r"|\bcustom\s+code\b",
-        code_goal,
-    ))
+    requirements = build_goal_requirements(request.user_goal,
+        (*request.input_artifacts, *request.prior_artifacts), request.revision_patch)
+    for requirement in [*requirements["operations"], *requirements["conditions"]]:
+        semantic_matches[requirement["op"]] = True
+    if requirements["domain"] == "housing_selection":
+        semantic_matches["attribute.filter"] = True
+        semantic_matches["vector.extract_location"] = True
     scored: list[tuple[int, str, ToolContract]] = []
+    relevant_names: set[str] = set()
     for contract in registry.values():
-        if contract.name == "code.execute" and not explicit_code:
-            continue
-        # Side effects are visible only when the user explicitly names the
-        # operation.  The compiler still binds confirmation/action hashes;
-        # this prevents incidental file publication from an otherwise read-
-        # only request while retaining a truthful contract catalog for it.
-        aliases = _ALIASES.get(contract.name, ())
-        if contract.side_effect and contract.name.lower() not in goal and not any(alias.lower() in goal for alias in aliases):
+        if not _catalog_operation_authorized(contract, request):
             continue
         score = 0
         if semantic_matches.get(contract.name, False):
@@ -937,6 +1074,8 @@ def candidate_catalog(registry: ToolContractRegistry, request: PlannerRequest, *
         for part in contract.name.replace(".", " ").split():
             if len(part) > 2 and part in goal:
                 score += 3
+        if score > 0:
+            relevant_names.add(contract.name)
         required_ports = [port for port in contract.input_ports.values() if port.required]
         affinity_ports = required_ports or list(contract.input_ports.values())
         matching_ports = [port for port in affinity_ports if any(port.accepts_type(kind) for kind in affinity_types)]
@@ -957,6 +1096,17 @@ def candidate_catalog(registry: ToolContractRegistry, request: PlannerRequest, *
         scored.append((score, contract.name, contract))
     scored.sort(key=lambda item: (-item[0], item[1], item[2].version))
     seeds = [item[2] for item in scored if item[0] > 0]
+    simple_buffer_goal = re.fullmatch(
+        r"\s*(?:(?:请|帮我)\s*)?(?:对(?:这些|该|所有)?(?:地块|图层|点|线|面|要素|数据)\s*)?"
+        r"(?:做|生成|创建|计算|构建|进行)?\s*(?:\d+(?:\.\d+)?\s*(?:公里|千米|米|km|m)\s*)?"
+        r"(?:缓冲区?|buffer)(?:计算|分析)?[。.!！\s]*", goal,
+    )
+    if simple_buffer_goal and "vector.buffer" in relevant_names:
+        # Only a complete, unambiguous single-operation request takes the
+        # small-catalog path. Partial keyword matches are ranking evidence,
+        # not proof that unmatched operations are irrelevant: compositional
+        # business requests still need the bounded type-affinity fallback.
+        seeds = [item for item in seeds if item.name in relevant_names]
     if not seeds:
         # Deterministic generic basis.  It avoids a blank catalog while still
         # never exposing every contract merely because the prompt was vague.
@@ -1000,13 +1150,18 @@ class OpenAICompatiblePlanner:
     prompt_version = PROMPT_VERSION
 
     def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float,
-                 max_tokens: int, max_retries: int, registry: ToolContractRegistry | None = None):
+                 max_tokens: int, max_retries: int, registry: ToolContractRegistry | None = None,
+                 total_timeout_seconds: float = 90.0, max_http_calls: int = 6):
         self.api_key = api_key.strip()
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout_seconds = float(timeout_seconds)
         self.max_tokens = int(max_tokens)
         self.max_retries = max(0, int(max_retries))
+        # Validate finite whole-planning bounds before any provider I/O.
+        PlanningBudget(total_timeout_seconds, max_http_calls)
+        self.total_timeout_seconds = float(total_timeout_seconds)
+        self.max_http_calls = max_http_calls
         self.registry = registry or ToolContractRegistry.with_builtins()
 
     @classmethod
@@ -1021,6 +1176,8 @@ class OpenAICompatiblePlanner:
             timeout_seconds=settings.APP_PLANNER_TIMEOUT_S,
             max_tokens=settings.APP_PLANNER_MAX_TOKENS,
             max_retries=settings.APP_MAX_LLM_RETRIES,
+            total_timeout_seconds=settings.APP_PLANNER_TOTAL_TIMEOUT_S,
+            max_http_calls=settings.APP_PLANNER_MAX_HTTP_CALLS,
             registry=registry,
         )
 
@@ -1042,6 +1199,10 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
 如果确实需要澄清，origin='needs_clarification'、tasks=[]，clarification 必须是一句具体且可回答的中文问题，明确指出缺失的用户事实。先核对用户目标、附件真实元数据和 revision_patch；已经给出的事实不得重复索要。不要输出思考过程。若不存在可指出的缺失事实，就生成满足目标的可执行计划，而不是返回空计划。可执行计划的 clarification 为 null 或省略。
 如果请求包含 verified_request_facts，它只来自用户原话与已检查的输入字段：重命名、缓冲距离、明确的目标坐标系、保留字段列表和筛选条件必须与对应工具参数一致，不得再次询问已明确给出的事实。可执行计划必须同时满足 tasks 非空、clarification 为 null；澄清计划必须同时满足 tasks=[]、origin='needs_clarification'、clarification 为具体问题。不要混合两种结构。未经确认的“字段名称”或未加引号的“某某列”可能有歧义，继续澄清，不把词缀自动当作字段名或删除词缀。
 每个工具的 task_template 来自同一执行合同，只展示结构。template_only 不是任务字段；尖括号槽位必须替换为真实任务键和上游输出端口，params 必须按用户事实填写，不得照抄示例或占位符。修复时逐项检查 repair.contract_diagnostics 中的精确端口和参数约束；保持原始用户目标，不得通过增加无关操作或改变业务参数掩盖错误。
+业务转 GIS：先把自然语言需求分解为对象、属性条件、空间关系、距离/时间条件和最终交付物。挑选学区房、选址等问题不能用常识推理或推荐文字代替实际数据分析。招生范围内不等于离学校近，直线距离不等于步行/驾车时间，也不得保证入学。依据上传的真实字段和范围数据，把“同时满足/且”落实为同一结果链上的连续筛选与空间提取；不得只做一个条件，或各做一条独立分支后交付其中之一。“或者/任一”不能执行成“且”。未知的价格上限、通学方式、学校与区域、招生范围或房源数据必须具体澄清；不要编造阈值、房源、字段或政策。
+goal_requirements 是从用户原文和真实输入提取的最低要求，不是全部理解的替代品。必须覆盖其 operations/conditions，最终地图和导出都消费处理后的成果。missing_facts 非空时提出可回答的问题，不返回泛泛推理结论。未出现的要求也仍须根据用户原文保留。run_id、input_revision 等由 Runtime 校正，不要输出冗余元数据；普通引用只需 kind、artifact_id 或 task_key/port，其他值采用合同默认。
+多指令请求必须逐项分解并覆盖每个明确动作，不能只执行第一项或用说明文字代替未执行步骤。“按顺序/依次/上一步结果”要求对应数据依赖；明确独立的编号任务各自从其指定输入形成结果分支。instruction_groups 表示用户原文中的独立任务，各组的条件、距离和交付格式分别满足，地图和导出只能消费本组处理后的结果。不能把独立组强行串联，也不能用同一个100米缓冲冒充另一组500米缓冲。编号本身不说明依赖关系；输入指向不明确时询问处理原始输入还是上一步结果。执行后才能交付成果，不以推理、承诺或空任务列表宣称完成。
+ordered_stages 是明确编号顺序或明确指向上一步结果的自然顺序中的独立发生次数。即使操作与参数相同，每个连续步骤也必须有自己的 Task，并消费前一步的结果；不能用一个 Task 冒充两步。多个缓冲步骤的距离按各自 requirements.params 绑定，不应用一个全局距离覆盖全部步骤。编号补充只修改对应步骤。明确的“排除/剔除”使用 attribute.filter 的 negate=true 保留未匹配记录；否定整个组合条件与分别否定各条件不同，范围不清时具体澄清。
 """
         user_payload: dict[str, Any] = {
             "reference_schemas": {
@@ -1055,6 +1216,8 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
             "prior_artifacts": list(request.prior_artifacts),
             "session_messages": list(request.session_messages),
             "revision_patch": request.revision_patch,
+            "goal_requirements": build_goal_requirements(request.user_goal,
+                (*request.input_artifacts, *request.prior_artifacts), request.revision_patch),
             "operation_catalog": {
                 "catalog_version": "1",
                 "operation_ids": list(catalog.operation_ids),
@@ -1073,11 +1236,24 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
         if rename_binding is not None:
             verified_facts["rename"] = {"old_name": rename_binding[0], "new_name": rename_binding[1]}
         buffer_distance_m = _verified_buffer_distance_m(request)
-        if buffer_distance_m is not None and "vector.buffer" in catalog.operation_ids:
+        requirements = user_payload['goal_requirements']
+        scoped_buffers = [item for stage in requirements.get('ordered_stages', [])
+                          for item in stage['requirements'] if item['op'] == 'vector.buffer']
+        scoped_buffers += [item for group in requirements.get('instruction_groups', [])
+                           for item in group.get('operations', []) if item['op'] == 'vector.buffer']
+        if buffer_distance_m is not None and "vector.buffer" in catalog.operation_ids and len(scoped_buffers) < 2:
             verified_facts["vector.buffer"] = {"distance_m": buffer_distance_m}
         for operation, fact in _verified_semantic_facts(request).items():
             if operation in catalog.operation_ids:
                 verified_facts[operation] = fact
+        grounded_conditions = requirements['conditions']
+        if requirements.get('instruction_groups') or requirements.get('ordered_stages'):
+            verified_facts.pop('attribute.filter', None)
+        elif len(grounded_conditions) == 1 and not grounded_conditions[0].get('unit_ambiguous'):
+            if 'attribute.filter' in catalog.operation_ids:
+                verified_facts['attribute.filter'] = grounded_conditions[0]['params']
+        elif grounded_conditions:
+            verified_facts.pop('attribute.filter', None)
         if verified_facts:
             user_payload["verified_request_facts"] = verified_facts
         if repair is not None:
@@ -1141,6 +1317,10 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
         }}
 
     def _call(self, messages: list[dict[str, str]]) -> tuple[dict[str, Any], int]:
+        budget = current_planning_budget.get() or PlanningBudget(self.total_timeout_seconds, self.max_http_calls)
+        return asyncio.run(self._call_async(messages, budget))
+
+    async def _call_async(self, messages: list[dict[str, str]], budget: PlanningBudget) -> tuple[dict[str, Any], int]:
         endpoint = self._endpoint()
         payload = {
             "model": self.model,
@@ -1172,19 +1352,20 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
         last_error: Exception | None = None
         compatibility_used = False
         http_calls = 0
-        with httpx.Client(timeout=httpx.Timeout(self.timeout_seconds)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout_seconds)) as client:
+            async def post(body):
+                nonlocal http_calls
+                budget.reserve_call()
+                http_calls += 1
+                return await budget.wait(client.post(
+                    endpoint, json=body,
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
+                             "X-Client-Request-ID": f"gismind-planner-{uuid.uuid4().hex}"},
+                ))
+
             for attempt in range(self.max_retries + 1):
                 try:
-                    http_calls += 1
-                    response = client.post(
-                        endpoint,
-                        json=payload,
-                        headers={
-                            "Authorization": f"Bearer {self.api_key}",
-                            "Content-Type": "application/json",
-                            "X-Client-Request-ID": f"gismind-planner-{uuid.uuid4().hex}",
-                        },
-                    )
+                    response = await post(payload)
                     # Some strict OpenAI-compatible gateways reject vendor
                     # extensions rather than ignoring them.  Retry once in
                     # the same bounded request attempt without the optional
@@ -1201,18 +1382,9 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
                         fallback_payload["response_format"] = {"type": "json_object"}
                         compatibility_used = True
                         payload = fallback_payload
-                        http_calls += 1
-                        response = client.post(
-                            endpoint,
-                            json=fallback_payload,
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json",
-                                "X-Client-Request-ID": f"gismind-planner-{uuid.uuid4().hex}",
-                            },
-                        )
+                        response = await post(fallback_payload)
                     if response.status_code in retryable_statuses and attempt < self.max_retries:
-                        time.sleep(min(2.0, 0.25 * (2 ** attempt)))
+                        await budget.wait(asyncio.sleep(min(2.0, 0.25 * (2 ** attempt))))
                         continue
                     if response.status_code >= 400:
                         raise PlannerError(
@@ -1244,16 +1416,7 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
                         fallback_payload["response_format"] = {"type": "json_object"}
                         compatibility_used = True
                         payload = fallback_payload
-                        http_calls += 1
-                        response = client.post(
-                            endpoint,
-                            json=fallback_payload,
-                            headers={
-                                "Authorization": f"Bearer {self.api_key}",
-                                "Content-Type": "application/json",
-                                "X-Client-Request-ID": f"gismind-planner-{uuid.uuid4().hex}",
-                            },
-                        )
+                        response = await post(fallback_payload)
                         if response.status_code >= 400:
                             raise PlannerError(
                                 "LLM_HTTP_ERROR", f"LLM provider returned HTTP {response.status_code}",
@@ -1275,13 +1438,14 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
                     return body, int((time.monotonic() - started) * 1000)
                 except PlannerError:
                     raise
-                except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
                     last_error = exc
                     if attempt < self.max_retries:
-                        time.sleep(min(2.0, 0.25 * (2 ** attempt)))
+                        await budget.wait(asyncio.sleep(min(2.0, 0.25 * (2 ** attempt))))
                         continue
                     break
-        raise PlannerError("LLM_UNAVAILABLE", "LLM provider could not be reached", diagnostics={"error": str(last_error)})
+        raise PlannerError("LLM_UNAVAILABLE", "LLM provider could not be reached",
+                           diagnostics=_transport_diagnostics(last_error))
 
     def _plan(self, request: PlannerRequest, *, repair: dict[str, Any] | None = None,
               catalog_expansion: Sequence[str] = ()) -> PlannerCall:
@@ -1290,7 +1454,7 @@ Only cite an artifact ID that appears in input_artifacts or prior_artifacts. pri
         # repair receives the same bounded catalog unless its caller opts in
         # to this named expansion path.
         if catalog_expansion:
-            catalog = catalog.expand(self.registry, catalog_expansion, limit=18)
+            catalog = _expand_request_catalog(self.registry, request, catalog, catalog_expansion)
         catalog_hash = catalog.catalog_hash
         messages = self._messages(request, catalog, repair=repair)
         request_hash = _digest({"prompt_version": PROMPT_VERSION, "messages": messages, "model": self.model})

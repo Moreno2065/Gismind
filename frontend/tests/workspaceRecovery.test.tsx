@@ -33,6 +33,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Durable workspace recovery', () => {
+  it('binds the workspace to authoritative final IDs even when an older snapshot resolves later', async () => {
+    const old = { ...artifact, artifact_id: 'old-result', type: 'File', media_type: 'application/geopackage+sqlite3' };
+    let finishOld!: (value: Response) => void;
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/sessions/s/runs') return json({ items: [run, { ...run, run_id: 'r_old' }] });
+      if (url === '/api/runs/r_saved') return json({ ...run, output_artifacts: [old, artifact], final_artifact_ids: ['art_saved'] });
+      if (url === '/api/runs/r_old') return new Promise<Response>(resolve => { finishOld = resolve; });
+      if (url === '/api/artifacts/old-result') return json(old);
+      return originalFetch(url, init);
+    }));
+    render(<ChatPanel sessionId="s" />);
+    await waitFor(() => expect(screen.getByLabelText('成果工作区').getAttribute('data-artifact-id')).toBe('art_saved'));
+    await act(async () => finishOld(json({ ...run, run_id: 'r_old', output_artifacts: [old], final_artifact_ids: ['old-result'] })));
+    expect(screen.getByLabelText('成果工作区').getAttribute('data-artifact-id')).toBe('art_saved');
+    expect(screen.getByLabelText('成果工作区').getAttribute('data-result-run-id')).toBe('r_saved');
+  });
+
   it('reloads a cached map from its Artifact instead of requesting a new Run', async () => {
     render(<MessageBubble message={{ id: 'm', role: 'assistant', status: 'done', created_at: 1, blocks: [{ type: 'map', artifact_id: 'art_saved', expired: true, layers: [], bbox: [0, 0, 1, 1] }] }} />);
     fireEvent.click(screen.getByRole('button', { name: '加载历史地图' }));

@@ -897,6 +897,7 @@ class PlanIR(_ContractModel):
     bindings: list[dict[str, Any]] = Field(default_factory=list)
     allowed_operation_ids: list[str] = Field(default_factory=list)
     catalog_hash: str | None = None
+    goal_requirements: dict[str, Any] | None = None
     plan_hash: str = ""
     canonical_json: str = ""
     execution_fingerprint: str = ""
@@ -1117,6 +1118,23 @@ class ToolContractRegistry:
         # registry so every public operation is checked before CAS publish.
         from .postconditions import postcondition_references
 
+        # Stronger record/geometry semantics invalidate old executable and cache
+        # identities. Keep historical hashes explicit, not rewritten baselines.
+        semantic_predecessors = {
+            "vector.dissolve": "decbdcc0cb258bb20e9e866092ec32de56b945d084fbde0cdaf65a88ff695b3a",
+            "vector.join_nearest": "a34696254cf17001b12cd26b1f009305174eaf8f18f21cf56bbe20c98a7bbd7f",
+            "vector.count_points": "88272c325a95db4eea6d312e2556837c560ace2d772379fdf632d2a1e4e0f30d",
+            "vector.buffer": "c0826663b42c10b72d8f1b214eaeee18dc14b5451acee39b47a012b364b8dc98",
+            "vector.clip": "29c87f487319cf9621274eec2754ea7dc35e25be18b3bbd6854b7f5b08773437",
+            "vector.extract_location": "f0b34033fb7062e23ad308e1d1c329019a2b6422903f5ea7a8b39258018f8e15",
+            "vector.point_on_surface": "434c5f830defa1a2ad6fc0cead0bbe9a5131f697b0274f55d0487fcc823cf775",
+            "attribute.filter": "0245baca98328635c33e6bdc7595f27bd0c44ef2ba84e91dc88fa70c786d6e67",
+            "attribute.keep_fields": "ad8330311fed9ce0ec784b88a6f53f1c9eb714bb750aec0044fd7d45c680c279",
+            "attribute.rename_field": "a09438ca1d7964540752cff7bccf15b7fd951e543b72875f518016fa01a93e50",
+        }
+        def predecessor(name):
+            return {"supersedes": {"version": "1.0.0", "contract_hash": semantic_predecessors[name]}} if name in semantic_predecessors else {}
+
         vector = PortContract(artifact_type="Vector", crs_policy={"required": True})
         registry = cls()
         strict_vector_operations: dict[str, tuple[dict[str, PortContract], dict[str, PortContract], dict[str, Any]]] = {
@@ -1162,7 +1180,7 @@ class ToolContractRegistry:
             ),
             "attribute.filter": (
                 {"input": vector}, {"output": vector},
-                {"type": "object", "additionalProperties": False, "required": ["field", "operator", "value"], "properties": {"field": {"type": "string", "minLength": 1}, "operator": {"type": "string", "enum": ["=", "==", "!=", ">", ">=", "<", "<=", "contains", "in", "is_null"]}, "value": {}}},
+                {"type": "object", "additionalProperties": False, "required": ["field", "operator", "value"], "properties": {"field": {"type": "string", "minLength": 1}, "operator": {"type": "string", "enum": ["=", "==", "!=", ">", ">=", "<", "<=", "contains", "in", "is_null"]}, "value": {}, "negate": {"type": "boolean", "default": False}}},
             ),
             "attribute.keep_fields": (
                 {"input": vector}, {"output": vector},
@@ -1236,12 +1254,14 @@ class ToolContractRegistry:
             )
             globals()[f"_validate_public_{safe}"] = _make_public_validator(name)
             registry.register(contract.model_copy(update={
+                "version": "1.1.0" if name in semantic_predecessors else contract.version,
                 "handler_ref": f"app.runtime.contracts:{handler_name}",
                 "validator": f"app.runtime.contracts:_validate_public_{safe}",
                 "postconditions": postcondition_references(name),
                 "manifest": {
                     "contract_tests": [_OPERATION_TESTS.get(name, _BUILTIN_CONTRACT_TEST_NODE)],
                     **({"supersedes": {"version": "1.0.0", "contract_hash": "292842964b4648511c3960e189363b33d06a0237d37afb881e957793519d4995"}} if name == "file.export" else {}),
+                    **predecessor(name),
                 },
             }))
         # Stage five expands the small phase-two seed registry to the complete
@@ -1383,14 +1403,14 @@ class ToolContractRegistry:
             if operation == "raster.sample":
                 schema = {"type": "object", "additionalProperties": False, "properties": {}}
             contract = ToolContract(
-                name=operation, version="1.1.0" if operation == "geo.transform" else "1.0.0", input_ports=in_ports, output_ports=out_ports,
+                name=operation, version="1.2.0" if operation in {"attribute.filter", "attribute.keep_fields"} else "1.1.0" if operation == "geo.transform" or operation in semantic_predecessors else "1.0.0", input_ports=in_ports, output_ports=out_ports,
                 parameter_schema=schema, empty_policy=empty, executor_type=executor,
                 resource_budget=ResourceBudget(isolation="code_process" if executor == "code" else ("worker_async" if executor == "worker_async" else "gis_process"), timeout_seconds=300, memory_mb=2048 if executor == "code" else 4096),
                 cache_policy=cache_policy, fallback_policy=fallback_policy, retry_policy=retry_policy,
                 validator=f"app.runtime.contracts:_validate_public_{safe}",
                 postconditions=postcondition_references(operation),
                 handler_ref=f"app.runtime.tool_handlers:handle_{safe}",
-                manifest={"contract_tests": ["tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"], "migration": "runtime"},
+                manifest={"contract_tests": ["tests/unit/test_runtime_contract_regressions.py::test_runtime_contract_handlers_are_importable"], "migration": "runtime", **predecessor(operation)},
             )
             _PUBLIC_CONTRACT_SHAPES[operation] = (
                 set(contract.input_ports),

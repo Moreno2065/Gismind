@@ -114,12 +114,13 @@ def _same_geometry(expected: Any, actual: Any, tolerance: float) -> bool:
 
 
 def _same_records(expected: list[tuple[dict[str, Any], Any]],
-                  actual: list[tuple[dict[str, Any], Any]], *, tolerance: float) -> bool:
+                  actual: list[tuple[dict[str, Any], Any]], *, tolerance: float,
+                  geometry_matches: Callable[[Any, Any, float], bool] = _same_geometry) -> bool:
     """Match records in any order; index the common exact case and spatially bound near matches."""
     if len(expected) != len(actual):
         return False
     if all(_property_key(source_properties) == _property_key(output_properties)
-           and _same_geometry(source_geometry, output_geometry, tolerance)
+           and geometry_matches(source_geometry, output_geometry, tolerance)
            for (source_properties, source_geometry), (output_properties, output_geometry) in zip(expected, actual)):
         return True
 
@@ -157,12 +158,61 @@ def _same_records(expected: list[tuple[dict[str, Any], Any]],
         for local_index in tree.query(search):
             index = indices[int(local_index)]
             if not used[index] and _property_key(actual[index][0]) == _property_key(properties) \
-                    and _same_geometry(geometry, actual[index][1], tolerance):
+                    and geometry_matches(geometry, actual[index][1], tolerance):
                 used[index] = True
                 break
         else:
             return False
     return all(used)
+
+
+def _same_buffer_geometry(expected: Any, actual: Any, tolerance: float) -> bool:
+    """Compare every buffer vertex without choosing a floating-point ring anchor.
+
+    CRS round trips can swap which of two nearly equal x ordinates is smallest.
+    normalize() then rotates otherwise identical rings to different vertices,
+    so equals_exact() rejects them despite sub-micrometre physical differences.
+    Keep vertex counts, dimensions, holes and parts strict; only ring start and
+    direction are representation choices rather than buffer semantics.
+    """
+    from shapely.geometry import Polygon
+
+    if expected.geom_type != actual.geom_type:
+        return False
+    if expected.is_empty or actual.is_empty:
+        return (expected.geom_type in {"Polygon", "MultiPolygon"}
+                and expected.is_empty and actual.is_empty)
+    if expected.geom_type == "MultiPolygon":
+        return _same_records([({}, part) for part in expected.geoms],
+                             [({}, part) for part in actual.geoms], tolerance=tolerance,
+                             geometry_matches=_same_buffer_geometry)
+    if expected.geom_type != "Polygon":
+        return False
+
+    def same_vertex(left, right):
+        # Match equals_exact's planar distance bound as well as every ordinate
+        # and dimension; per-axis bounds alone would admit >2 cm diagonals.
+        return _same_coordinate_tree(left, right, tolerance) and math.hypot(
+            left[0] - right[0], left[1] - right[1]) <= tolerance
+
+    def same_ring(left, right):
+        left_coords, right_coords = list(left.coords)[:-1], list(right.coords)[:-1]
+        if len(left_coords) != len(right_coords) or not left_coords:
+            return False
+        count = len(left_coords)
+        for start, coordinate in enumerate(right_coords):
+            if not same_vertex(left_coords[0], coordinate):
+                continue
+            for direction in (1, -1):
+                if all(same_vertex(value, right_coords[(start + direction * index) % count])
+                       for index, value in enumerate(left_coords)):
+                    return True
+        return False
+
+    return same_ring(expected.exterior, actual.exterior) and _same_records(
+        [({}, Polygon(ring)) for ring in expected.interiors],
+        [({}, Polygon(ring)) for ring in actual.interiors], tolerance=tolerance,
+        geometry_matches=_same_buffer_geometry)
 
 
 def _crs_name(value: Any) -> str:
@@ -208,6 +258,208 @@ def validate_vector_generic(result: Any, inputs: dict[str, Any], params: dict[st
     return parsed is not None
 
 
+def validate_vector_dissolve(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    from .aggregate_postconditions import dissolve
+    return dissolve(result, inputs, params, empty_policy)
+
+
+def validate_vector_join_nearest(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    from .aggregate_postconditions import join_nearest
+    return join_nearest(result, inputs, params, empty_policy)
+
+
+def validate_vector_count_points(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    from .aggregate_postconditions import count_points
+    return count_points(result, inputs, params, empty_policy)
+
+
+def _records(features: list[dict[str, Any]], *, fill_fields: bool = False) -> list[tuple[dict[str, Any], Any]]:
+    from shapely.geometry import shape
+
+    fields = {key for feature in features for key in (feature.get("properties") or {})} if fill_fields else set()
+    return [({**dict.fromkeys(fields), **(feature.get("properties") or {})}, shape(feature["geometry"]))
+            for feature in features]
+
+
+def _source_crs(source: Any) -> str:
+    payload = _unwrap(source)
+    return (_declared_crs(source) or _declared_crs(payload)
+            or ("GCJ02" if isinstance(payload, dict) and payload.get("_crs_label") == "GCJ02" else "")
+            or _physical_crs(source) or "EPSG:4326")
+
+
+def _preserves_crs(source: Any, payload: dict[str, Any]) -> bool:
+    expected = _source_crs(source)
+    observed = _physical_crs(payload)
+    if observed and observed != ("EPSG:4326" if expected == "GCJ02" else expected):
+        return False
+    return payload.get("_crs_label") in {None, "GCJ02"} if expected == "GCJ02" else payload.get("_crs_label") != "GCJ02"
+
+
+def _record_inputs(result: Any, inputs: dict[str, Any], empty_policy: str | None):
+    parsed = _vector_result(result, empty_policy=empty_policy)
+    source = inputs.get("input") or inputs.get("vector")
+    source_features = _features(source)
+    if parsed is None or source_features is None or not _preserves_crs(source, parsed[1]):
+        raise ValueError("invalid vector result or changed CRS")
+    return _records(source_features, fill_fields=True), _records(parsed[0])
+
+
+def validate_attribute_rename_field(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        old, new = params["old_name"], params["new_name"]
+        if not old or not new or old == new or any(old not in properties or new in properties for properties, _ in source):
+            return False
+        expected = [({new if key == old else key: value for key, value in properties.items()}, geometry)
+                    for properties, geometry in source]
+        return _same_records(expected, actual, tolerance=0)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def validate_attribute_keep_fields(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        fields = set(params["fields"]) - {"geometry"}
+        # A projection cannot manufacture a renamed column. Checking only the
+        # intersection would certify a successful result after silently losing it.
+        if source and not fields.issubset(source[0][0]):
+            return False
+        expected = [({key: value for key, value in properties.items() if key in fields}, geometry)
+                    for properties, geometry in source]
+        return _same_records(expected, actual, tolerance=0)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def validate_attribute_filter(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        import operator
+        import pandas as pd
+
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        field, operation, value = params["field"], params["operator"], params["value"]
+        if source and field not in source[0][0]:
+            return False
+        # Rebuild a column independently of the handler. Pandas supplies its
+        # documented nullable numeric and regex semantics, never an LLM judge.
+        column = pd.DataFrame([properties for properties, _ in source]).get(field, pd.Series(dtype=object))
+        comparisons = {"=": operator.eq, "==": operator.eq, "!=": operator.ne, ">": operator.gt,
+                       ">=": operator.ge, "<": operator.lt, "<=": operator.le}
+        if operation in comparisons:
+            selected = comparisons[operation](column, value)
+        elif operation == "in" and isinstance(value, list):
+            selected = column.isin(value)
+        elif operation == "is_null":
+            selected = column.isna()
+        elif operation == "contains":
+            selected = column.astype(str).str.contains(str(value), na=False)
+        else:
+            return False
+        if not pd.api.types.is_bool_dtype(selected.dtype):
+            return False
+        selected = selected.fillna(False)
+        if params.get("negate") is True:
+            selected = selected.astype(bool)
+            if operation != "is_null":
+                selected = selected & column.notna()
+            selected = ~selected
+        expected = [record for record, include in zip(source, selected) if include]
+        return _same_records(expected, actual, tolerance=0)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def validate_vector_clip(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        from shapely.ops import unary_union
+
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        masks = _features(inputs.get("mask"))
+        if masks is None or _source_crs(inputs.get("input")) != _source_crs(inputs.get("mask")):
+            return False
+        mask = unary_union([geometry for _, geometry in _records(masks)])
+        expected = []
+        for properties, geometry in source:
+            clipped = geometry.intersection(mask)
+            if not clipped.is_empty:
+                expected.append((properties, clipped.normalize()))
+        return _same_records(expected, [(properties, geometry.normalize()) for properties, geometry in actual], tolerance=1e-9)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def validate_vector_extract_location(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        from shapely.strtree import STRtree
+
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        masks = _features(inputs.get("mask"))
+        predicate = params.get("predicate", "intersects")
+        if masks is None or predicate not in {"intersects", "within", "contains"} \
+                or _source_crs(inputs.get("input")) != _source_crs(inputs.get("mask")):
+            return False
+        tree = STRtree([geometry for _, geometry in _records(masks)])
+        expected = [(properties, geometry) for properties, geometry in source
+                    if len(tree.query(geometry, predicate=predicate)) > 0]
+        return _same_records(expected, actual, tolerance=0)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def validate_vector_point_on_surface(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
+    try:
+        from shapely.strtree import STRtree
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import maximum_bipartite_matching
+
+        source, actual = _record_inputs(result, inputs, empty_policy)
+        if len(source) != len(actual) or any(geometry.geom_type != "Point" for _, geometry in actual):
+            return False
+        if not source:
+            return True
+        # Match original properties and membership together. A perfect matching
+        # permits output reordering while preserving multiplicity of equal rows.
+        tree = STRtree([geometry for _, geometry in actual])
+        rows, columns = [], []
+        for row, (properties, geometry) in enumerate(source):
+            for column in tree.query(geometry, predicate="covers"):
+                if _property_key(properties) == _property_key(actual[int(column)][0]):
+                    rows.append(row)
+                    columns.append(int(column))
+        edges = csr_matrix(([1] * len(rows), (rows, columns)), shape=(len(source), len(actual)))
+        return bool((maximum_bipartite_matching(edges) >= 0).all())
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _metric_records(source: Any, source_records, actual_records):
+    """Project independent geometry reads to the documented local metre CRS."""
+    from pyproj import Transformer
+    from shapely.ops import transform, unary_union
+
+    crs = _source_crs(source)
+    if crs == "GCJ02":
+        from app.tools.geo_transform import gcj02_to_wgs84
+
+        def to_wgs(x, y, z=None):
+            x, y = gcj02_to_wgs84(x, y)
+            return (x, y) if z is None else (x, y, z)
+    else:
+        to_wgs = Transformer.from_crs(crs, 4326, always_xy=True).transform
+    source_wgs = [(properties, transform(to_wgs, geometry)) for properties, geometry in source_records]
+    centroid = unary_union([geometry for _, geometry in source_wgs]).centroid
+    longitude, latitude = centroid.x, centroid.y
+    if 73.5 <= longitude <= 135.5:
+        epsg = 4534 + round((round(longitude / 3) * 3 - 75) / 3)
+    else:
+        epsg = (32600 if latitude >= 0 else 32700) + min(60, max(1, int((longitude + 180) / 6) + 1))
+    project = Transformer.from_crs(4326, epsg, always_xy=True).transform
+    return ([(properties, transform(project, geometry)) for properties, geometry in source_wgs],
+            [(properties, transform(project, transform(to_wgs, geometry))) for properties, geometry in actual_records])
+
+
 def validate_vector_buffer(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
     parsed = _vector_result(result, empty_policy=empty_policy)
     if parsed is None:
@@ -218,7 +470,7 @@ def validate_vector_buffer(result: Any, inputs: dict[str, Any], params: dict[str
         return False
     # A buffer is one output geometry per source feature (unless the source is
     # genuinely empty), so a handler that silently drops features is invalid.
-    if source and len(features) < len(source):
+    if len(features) != len(source):
         return False
     expected = params.get("distance_m", params.get("radius_m", params.get("radius")))
     if isinstance(expected, bool) or not isinstance(expected, (int, float)) or not math.isfinite(float(expected)) or expected < 0:
@@ -236,7 +488,20 @@ def validate_vector_buffer(result: Any, inputs: dict[str, Any], params: dict[str
         return False
     if source_crs not in {"", "GCJ02"} and physical and physical != source_crs.replace(" ", ""):
         return False
-    return True
+    if not _preserves_crs(inputs.get("vector") or inputs.get("input"), payload):
+        return False
+    if not source:
+        return True
+    try:
+        source_records, actual = _metric_records(inputs.get("vector") or inputs.get("input"),
+                                                 _records(source, fill_fields=True), _records(features))
+        expected_records = [(properties, geometry.buffer(float(expected))) for properties, geometry in source_records]
+        # GEOS approximation and every vertex remain fixed. Allow the existing
+        # 2 cm for physical CRS/datum round trips, independently of ring anchors.
+        return _same_records(expected_records, actual, tolerance=0.02,
+                             geometry_matches=_same_buffer_geometry)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def validate_vector_reproject(result: Any, inputs: dict[str, Any], params: dict[str, Any], *, empty_policy: str | None = None) -> bool:
@@ -601,6 +866,15 @@ _RASTER_OPS = {"raster.reclassify", "raster.clip_extent", "raster.tpi", "raster.
 _TABLE_OPS = {"raster.zonal_statistics", "raster.sample", "io.load_csv", "io.summarize", "vector.check_validity"}
 
 POSTCONDITION_FUNCTIONS: dict[str, Callable[..., bool]] = {
+    "vector.dissolve": validate_vector_dissolve,
+    "vector.join_nearest": validate_vector_join_nearest,
+    "vector.count_points": validate_vector_count_points,
+    "attribute.rename_field": validate_attribute_rename_field,
+    "attribute.keep_fields": validate_attribute_keep_fields,
+    "attribute.filter": validate_attribute_filter,
+    "vector.clip": validate_vector_clip,
+    "vector.extract_location": validate_vector_extract_location,
+    "vector.point_on_surface": validate_vector_point_on_surface,
     "vector.buffer": validate_vector_buffer,
     "vector.reproject": validate_vector_reproject,
     "vector.reproject_many": validate_vector_reproject_many,

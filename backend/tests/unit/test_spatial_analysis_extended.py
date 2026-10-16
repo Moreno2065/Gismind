@@ -696,16 +696,17 @@ class TestKeepFields:
         assert "b" in result["data"].columns
         assert "c" not in result["data"].columns
 
-    def test_keep_fields_ignore_missing(self):
-        """不存在的字段被忽略。"""
+    def test_keep_fields_reject_missing(self):
+        """不存在的字段不能被静默忽略并返回丢列成果。"""
         analyzer = SpatialAnalyzer()
         gdf = _make_points_gdf([_NANJING_GCJ02], crs="GCJ02")
         gdf["a"] = 1
 
         result = analyzer.keep_fields(gdf, ["a", "nonexistent"])
 
-        assert result["status"] == "success"
-        assert "a" in result["data"].columns
+        assert result["status"] == "error"
+        assert "nonexistent" in result["message"]
+        assert "data" not in result
 
 
 # ============================================================

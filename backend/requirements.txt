@@ -32,3 +32,4 @@ psutil>=7.0.0
 pyogrio>=0.12.0
 pandas>=2.2.0
 affine>=2.4.0
+playwright>=1.63.0

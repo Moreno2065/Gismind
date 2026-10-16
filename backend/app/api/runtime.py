@@ -262,12 +262,14 @@ def _snapshot(runtime: RuntimeStore, run_id: str) -> dict[str, Any] | None:
         "active_input_revision": ({"input_revision_id": input_revision[0], "revision": input_revision[1]} if input_revision else {"revision": run.get("input_revision", 1)}),
         "active_plan": ({"plan_id": plan["plan_id"], "revision": plan["plan_version"], "plan_hash": plan["plan_hash"]} if plan else None),
         "tasks": tasks,
+        "planning_attempts": projection["planning_attempts"],
         "output_artifacts": outputs,
+        "final_artifact_ids": projection["final_artifact_ids"],
         "last_event_id": last_event_id,
         "last_seq": int(run.get("last_event_seq", 0)),
         "awaiting_input": awaiting_payload,
         "pending_confirmations": pending_confirmations,
-        "diagnostic": awaiting_payload.get("diagnostic") if isinstance(awaiting_payload, dict) else None,
+        "diagnostic": projection["diagnostic"],
         "patch_schema": awaiting_payload.get("patch_schema") if isinstance(awaiting_payload, dict) else None,
     }
 
@@ -761,14 +763,3 @@ async def upload_runtime_artifact(
         staged.unlink(missing_ok=True)
         return _error(request, 422, "ARTIFACT_INVALID", str(exc))
     return JSONResponse(status_code=201, content=_public_artifact(artifact), headers={"X-Request-ID": _request_id(request)})
-
-
-def _validate_upload_zip(path: Path) -> None:
-    """Retain one ZIP validation implementation for API and isolated readers."""
-    from app.runtime.upload_inspection import validate_zip
-
-    validate_zip(
-        path,
-        max_total=int(settings.UPLOAD_ZIP_MAX_TOTAL_SIZE) * 1024 * 1024,
-        max_count=int(settings.UPLOAD_ZIP_MAX_FILE_COUNT),
-    )

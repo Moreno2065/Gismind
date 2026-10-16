@@ -30,6 +30,7 @@ from .contracts import (
     validate_crs_value,
 )
 from .planner import PlanDraftInvalid, parse_planner_draft
+from .goal_requirements import _positive_clauses, build_goal_requirements, validate_goal_requirements
 
 
 class CompileError(ValueError):
@@ -46,7 +47,7 @@ class AwaitingInputDiagnostic(CompileError):
 
 
 _EXPORT_FORMAT_TOKEN = re.compile(
-    r"(?<![a-z0-9])(?:geo[ -]?package|geo[ -]?json|gpkg|csv|shapefile|shp|kml|gml|geoparquet|parquet|xlsx|xls|json)(?![a-z0-9])",
+    r"(?<![a-z0-9])(?:geo[ -]?package|geo[ -]?json|geo[ -]?tiff|tiff|tif|gpkg|csv|shapefile|shp|kml|gml|geoparquet|parquet|xlsx|xls|json|png|jpe?g|webp|bmp|gif|pdf)(?![a-z0-9])",
     re.IGNORECASE,
 )
 _EXPORT_VERB = re.compile(r"导出|另存(?:为)?|保存(?:为)?|输出|下载|转(?:换)?(?:为|成)|export|save|write|download", re.IGNORECASE)
@@ -54,9 +55,10 @@ _EXPORT_VERB = re.compile(r"导出|另存(?:为)?|保存(?:为)?|输出|下载|�
 
 def _requested_export_formats(goal: str) -> set[str]:
     """Read explicit export format words from the trusted request text."""
-    aliases = {"geopackage": "gpkg", "geo package": "gpkg", "geo-json": "geojson", "geo json": "geojson"}
+    aliases = {"geopackage": "gpkg", "geo package": "gpkg", "geo-json": "geojson", "geo json": "geojson",
+               "tif": "geotiff", "tiff": "geotiff", "geo-tiff": "geotiff", "geo tiff": "geotiff"}
     found: set[str] = set()
-    for clause in re.split(r"[，,。；;!！?？\n]", goal.lower()):
+    for clause in re.split(r"[，,。；;!！?？\n]", _positive_clauses(goal).lower()):
         for verb in _EXPORT_VERB.finditer(clause):
             following = clause[verb.end():verb.end() + 40]
             next_verb = _EXPORT_VERB.search(following)
@@ -64,15 +66,26 @@ def _requested_export_formats(goal: str) -> set[str]:
                 following = following[:next_verb.start()]
             for match in _EXPORT_FORMAT_TOKEN.finditer(following):
                 found.add(aliases.get(match.group().lower(), match.group().lower().replace(" ", "").replace("-", "")))
-            explicit_name = re.match(r"\s*(?:为|成|至|到)\s*\.?\s*([a-z][a-z0-9+_-]{1,15})(?=\s|$|格式|文件|图片|图像)", following)
-            if explicit_name:
+            # Chinese permits a bare format object (输出PNG / 导出XYZ格式).
+            # Keep English generic objects such as "download results" out.
+            connector = r"(?:为|成|至|到)?" if not verb.group().isascii() else r"(?:为|成|至|到)"
+            explicit_name = re.match(r"\s*" + connector + r"\s*\.?\s*([a-z][a-z0-9+_-]{1,15})(?=\s|$|格式|文件|图片|图像|栅格)", following)
+            if explicit_name and not _EXPORT_FORMAT_TOKEN.match(following, explicit_name.start(1)):
                 found.add(aliases.get(explicit_name.group(1), explicit_name.group(1)))
             explicit_english = re.match(r"\s*(?:as|to)\s+\.?([a-z][a-z0-9+_-]{1,15})(?:\b|$)", following)
-            if explicit_english:
+            if explicit_english and not _EXPORT_FORMAT_TOKEN.match(following, explicit_english.start(1)):
                 found.add(aliases.get(explicit_english.group(1), explicit_english.group(1)))
-        for match in _EXPORT_FORMAT_TOKEN.finditer(clause):
-            suffix = clause[match.end():match.end() + 8]
-            if re.match(r"\s*(?:格式|文件)\s*(?:导出|保存|输出)", suffix):
+        # The format may precede the delivery verb (PNG栅格文件供下载).
+        # Read unknown names too when a format/file label makes them explicit;
+        # otherwise an unsupported named format could silently become TIFF.
+        candidates = [(match, True) for match in _EXPORT_FORMAT_TOKEN.finditer(clause)]
+        candidates += [(match, False) for match in re.finditer(r"(?<![a-z0-9])[a-z][a-z0-9+_-]{1,15}(?![a-z0-9])", clause)
+                       if match.group() not in {'raster', 'vector', 'file', 'result', 'data'}]
+        descriptor = r"(?:格式(?:的)?(?:地理参考的)?(?:栅格|矢量|图像|图片)?(?:文件)?|(?:地理参考的)?(?:栅格|矢量|图像|图片)(?:文件)?|文件)"
+        for match, known in candidates:
+            suffix = clause[match.end():match.end() + 32]
+            label = descriptor + ('?' if known else '')
+            if re.match(r"\s*" + label + r"\s*(?:供)?(?:导出|保存|输出|下载)", suffix):
                 found.add(aliases.get(match.group().lower(), match.group().lower().replace(" ", "").replace("-", "")))
     return found
 
@@ -147,10 +160,33 @@ class Compiler:
             raise CompileError("PLAN_DRAFT_INVALID", "draft", "planner draft does not satisfy the Draft schema", {"error": str(exc)}) from exc
         steps = list(parsed.tasks)
         trusted_goal = self.policy.get("trusted_user_goal")
+        visible_artifacts = self.policy.get("visible_artifacts", [])
+        if isinstance(trusted_goal, str) and not visible_artifacts and self.artifact_lookup is not None:
+            visible_ids = {ref.artifact_id for step in steps for ref in self._iter_refs(step.inputs)
+                           if isinstance(ref, ArtifactRef)}
+            try:
+                visible_artifacts = [item for key in sorted(visible_ids)
+                                     if isinstance(item := self.artifact_lookup(key), dict)]
+            except Exception as exc:
+                raise CompileError("INVALID_REF", "tasks.inputs", "artifact lookup failed") from exc
+        goal_requirements = build_goal_requirements(
+            trusted_goal, visible_artifacts, self.policy.get("revision_patch"),
+        ) if isinstance(trusted_goal, str) else None
         requested_export_formats = _requested_export_formats(trusted_goal) if isinstance(trusted_goal, str) else set()
-        if requested_export_formats:
-            if len(requested_export_formats) != 1 or not requested_export_formats.issubset(FILE_EXPORT_FORMATS):
+        export_goal = trusted_goal or ""
+        revision_answer = (self.policy.get("revision_patch") or {}).get("clarification")
+        if isinstance(revision_answer, str) and _requested_export_formats(revision_answer):
+            export_goal = revision_answer
+            requested_export_formats = _requested_export_formats(revision_answer)
+        native_formats = {'geotiff'} if goal_requirements and goal_requirements.get('native_raster_delivery') else set()
+        requested_file_formats = requested_export_formats - native_formats
+        if requested_file_formats:
+            if not requested_file_formats.issubset(FILE_EXPORT_FORMATS):
                 raise CompileError("INVALID_PARAMETER", "tasks.file.export.params.format", "requested export format is unsupported or ambiguous", {"requested_formats": sorted(requested_export_formats), "supported_formats": sorted(FILE_EXPORT_FORMATS)})
+            if len(requested_export_formats) > 1 and re.search(r"或|任选|任一|\bor\b", export_goal, re.I):
+                raise AwaitingInputDiagnostic("EXPORT_FORMAT_CHOICE_REQUIRED", "user_goal", "请确认要导出GeoJSON、GPKG，还是两种格式都需要？", {
+                    "patch_schema": {"type": "object", "properties": {"clarification": {"type": "string", "minLength": 1,
+                        "title": "导出格式"}}, "required": ["clarification"], "additionalProperties": False}})
             if not any(self.registry.canonical_name(step.op) == "file.export" for step in steps):
                 raise CompileError("INVALID_PARAMETER", "tasks", "explicit export request requires a file.export task", {"requested_format": next(iter(requested_export_formats))})
         if not steps:
@@ -274,9 +310,8 @@ class Compiler:
                     raise CompileError("CRS_CONFLICT", f"tasks.{step.task_key}.inputs.{port_name}", "inputs requiring the same CRS disagree")
             params = self._normalize_params(step.params, contract, f"tasks.{step.task_key}.params")
             if contract.name == "file.export" and requested_export_formats:
-                requested_format = next(iter(requested_export_formats))
-                if params["format"] != requested_format:
-                    raise CompileError("INVALID_PARAMETER", f"tasks.{step.task_key}.params.format", "export format contradicts the user request", {"requested_format": requested_format, "planned_format": params["format"]})
+                if params["format"] not in requested_export_formats:
+                    raise CompileError("INVALID_PARAMETER", f"tasks.{step.task_key}.params.format", "export format contradicts the user request", {"requested_formats": sorted(requested_export_formats), "planned_format": params["format"]})
             if contract.name == "code.execute":
                 self._validate_code_input_declarations(params, inputs, f"tasks.{step.task_key}")
             self._validate_side_effect_params(contract, params, f"tasks.{step.task_key}.params")
@@ -296,6 +331,13 @@ class Compiler:
         # draft (or the compiler-generated node) was encountered in another
         # order.
         compiled = self._topological_order(compiled)
+        missing_formats = requested_file_formats - {task.params.get("format") for task in compiled if task.op == "file.export"}
+        if missing_formats:
+            raise CompileError("GOAL_REQUIREMENT_MISSING", "tasks", "计划遗漏了用户要求的导出格式。", {
+                "requirement": {"op": "file.export", "params": {"format": sorted(missing_formats)[0]}},
+                "missing_formats": sorted(missing_formats)})
+        if goal_requirements is not None:
+            validate_goal_requirements(goal_requirements, compiled)
         self._validate_budget(compiled)
         input_ids = sorted({ref.artifact_id for task in compiled for ref in self._iter_refs(task.inputs) if isinstance(ref, ArtifactRef)})
         input_ids = sorted(set(input_ids) | {ref.artifact_id for ref in parsed.external_inputs})
@@ -312,6 +354,8 @@ class Compiler:
                 "tasks": [task.model_dump(mode="json") for task in sorted(compiled, key=lambda item: item.task_key)],
                 "bindings": sorted((_canonical(binding) for binding in parsed.bindings), key=lambda binding: json.dumps(binding, sort_keys=True, separators=(",", ":"))),
             }
+            if goal_requirements is not None:
+                payload["goal_requirements"] = goal_requirements
             canonical_json = json.dumps(_canonical(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except CompileError:
             raise
@@ -334,6 +378,7 @@ class Compiler:
             # ordering.
             tasks=compiled,
             bindings=payload["bindings"],
+            goal_requirements=goal_requirements,
             allowed_operation_ids=sorted(allowed_operation_ids),
             catalog_hash=parsed.catalog_hash,
             plan_hash=hashlib.sha256(canonical_json.encode("utf-8")).hexdigest(),
@@ -1038,17 +1083,6 @@ class Compiler:
         cache_key = None if task.side_effect or task.cache_policy.mode == "disabled" else _hash({"execution_fingerprint": fingerprint, "cache_policy": task.cache_policy.model_dump(mode="json")})
         action_hash = _hash({"task_key": task.task_key, "op": task.op, "params": task.params, "inputs": payload["inputs"], "outputs": payload["outputs"], "execution_fingerprint": fingerprint}) if task.side_effect else None
         return task.model_copy(update={"execution_fingerprint": fingerprint, "cache_key": cache_key, "action_hash": action_hash})
-
-    @staticmethod
-    def _compiled_ref_artifact_type(ref: InputRef, tasks: list[CompiledTask]) -> str:
-        if isinstance(ref, ArtifactRef):
-            return ref.type
-        for task in tasks:
-            if task.task_key == ref.task_key:
-                for output in task.outputs:
-                    if output.port == ref.port:
-                        return output.artifact_type
-        return "Artifact"
 
     def _compiled_ref_metadata(self, ref: InputRef, tasks: list[CompiledTask], output_crs: dict[str, dict[str, Any]]) -> OutputSpec:
         if isinstance(ref, ArtifactRef):

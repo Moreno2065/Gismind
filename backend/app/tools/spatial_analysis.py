@@ -864,6 +864,7 @@ class SpatialAnalyzer:
         self,
         gdf: gpd.GeoDataFrame,
         mask_gdf: gpd.GeoDataFrame,
+        *, preserve_input_crs: bool = False,
     ) -> dict:
         """裁剪：用 mask 多边形裁剪输入图层。
 
@@ -877,6 +878,12 @@ class SpatialAnalyzer:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
+            if preserve_input_crs:
+                if gdf.crs != mask_gdf.crs or gdf.attrs.get("crs_label") != mask_gdf.attrs.get("crs_label"):
+                    return {"status": "error", "message": "裁剪输入必须使用相同 CRS"}
+                clipped = gpd.clip(gdf, mask_gdf)
+                clipped.attrs = dict(gdf.attrs)
+                return {"status": "success", "data": clipped}
             wgs84_gdf = self._ensure_wgs84(gdf)
             wgs84_mask = self._ensure_wgs84(mask_gdf)
             epsg = _resolve_projected_crs(wgs84_gdf)
@@ -895,6 +902,7 @@ class SpatialAnalyzer:
         gdf: gpd.GeoDataFrame,
         mask_gdf: gpd.GeoDataFrame,
         predicate: str = "intersects",
+        *, preserve_input_crs: bool = False,
     ) -> dict:
         """按空间位置筛选：保留与 mask 满足空间关系的要素，不移除几何。
 
@@ -909,15 +917,17 @@ class SpatialAnalyzer:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
-            wgs84_gdf = self._ensure_wgs84(gdf)
-            wgs84_mask = self._ensure_wgs84(mask_gdf)
-            # spatial join 筛选匹配行，保留左侧几何
-            joined = gpd.sjoin(wgs84_gdf, wgs84_mask, how="inner", predicate=predicate)
-            # 移除 sjoin 添加的 index_right 列，保留原始字段
-            drop_cols = [c for c in joined.columns if c.endswith("_right") or c == "index_right"]
-            result_gdf = joined.drop(columns=drop_cols, errors="ignore")
-            result_gdf = gpd.GeoDataFrame(result_gdf, crs=wgs84_gdf.crs)
-            result = self._to_gcj02_output(result_gdf)
+            if preserve_input_crs and (gdf.crs != mask_gdf.crs or gdf.attrs.get("crs_label") != mask_gdf.attrs.get("crs_label")):
+                return {"status": "error", "message": "空间筛选输入必须使用相同 CRS"}
+            wgs84_gdf = gdf if preserve_input_crs else self._ensure_wgs84(gdf)
+            wgs84_mask = mask_gdf if preserve_input_crs else self._ensure_wgs84(mask_gdf)
+            # Select source row positions once. Joining full frames duplicates
+            # rows for overlapping masks and corrupts names shared by both inputs.
+            matched = wgs84_mask.sindex.query(wgs84_gdf.geometry, predicate=predicate)
+            selected = np.unique(matched[0])
+            result_gdf = wgs84_gdf.iloc[selected].copy()
+            result_gdf.attrs = dict(wgs84_gdf.attrs)
+            result = result_gdf if preserve_input_crs else self._to_gcj02_output(result_gdf)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("extract_by_location 计算失败")
@@ -1226,7 +1236,7 @@ class SpatialAnalyzer:
             logger.exception("centroid_layer 计算失败")
             return {"status": "error", "message": f"质心计算失败: {str(e)}"}
 
-    def point_on_surface(self, gdf: gpd.GeoDataFrame) -> dict:
+    def point_on_surface(self, gdf: gpd.GeoDataFrame, *, preserve_input_crs: bool = False) -> dict:
         """面上取点：每个要素内部的一个代表点（保证在面内）。
 
         Args:
@@ -1236,7 +1246,7 @@ class SpatialAnalyzer:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
-            wgs84_gdf = self._ensure_wgs84(gdf)
+            wgs84_gdf = gdf if preserve_input_crs else self._ensure_wgs84(gdf)
             rep_points = wgs84_gdf.representative_point()
             result_gdf = gpd.GeoDataFrame(
                 {
@@ -1245,7 +1255,8 @@ class SpatialAnalyzer:
                 },
                 crs=wgs84_gdf.crs,
             )
-            result = self._to_gcj02_output(result_gdf)
+            result_gdf.attrs = dict(wgs84_gdf.attrs)
+            result = result_gdf if preserve_input_crs else self._to_gcj02_output(result_gdf)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("point_on_surface 计算失败")
@@ -1435,6 +1446,7 @@ class SpatialAnalyzer:
         field: str,
         operator: str,
         value: Any,
+        *, preserve_input_crs: bool = False, negate: bool = False,
     ) -> dict:
         """按属性筛选：保留满足属性条件的要素。
 
@@ -1445,12 +1457,13 @@ class SpatialAnalyzer:
             field: 字段名
             operator: 比较运算符
             value: 比较值（is_null 时忽略）
+            negate: 排除匹配行，保留未匹配及未知值；不改写比较运算符。
 
         Returns:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
-            wgs84_gdf = self._ensure_wgs84(gdf)
+            wgs84_gdf = gdf if preserve_input_crs else self._ensure_wgs84(gdf)
             if field not in wgs84_gdf.columns:
                 return {"status": "error", "message": f"字段 {field} 不存在"}
 
@@ -1478,8 +1491,17 @@ class SpatialAnalyzer:
             else:
                 return {"status": "error", "message": f"不支持的运算符: {operator}"}
 
+            if not isinstance(negate, bool):
+                return {"status": "error", "message": "negate 必须是布尔值"}
+            if negate:
+                # Complement the actual matched set, not the comparison token:
+                # reversing > to <= would silently lose unknown/null records.
+                matched = mask.fillna(False).astype(bool)
+                if operator != 'is_null':
+                    matched = matched & col.notna()
+                mask = ~matched
             result_gdf = wgs84_gdf[mask].copy()
-            result = self._to_gcj02_output(result_gdf)
+            result = result_gdf if preserve_input_crs else self._to_gcj02_output(result_gdf)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("extract_by_attribute 计算失败")
@@ -1489,6 +1511,7 @@ class SpatialAnalyzer:
         self,
         gdf: gpd.GeoDataFrame,
         fields: list[str],
+        *, preserve_input_crs: bool = False,
     ) -> dict:
         """保留字段：仅保留 geometry 和指定字段。
 
@@ -1500,10 +1523,13 @@ class SpatialAnalyzer:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
-            wgs84_gdf = self._ensure_wgs84(gdf)
+            wgs84_gdf = gdf if preserve_input_crs else self._ensure_wgs84(gdf)
+            missing = sorted(set(fields) - set(wgs84_gdf.columns))
+            if missing:
+                return {"status": "error", "message": f"保留字段失败: 字段不存在: {', '.join(missing)}"}
             keep_cols = ["geometry"] + [f for f in fields if f in wgs84_gdf.columns and f != "geometry"]
             result_gdf = wgs84_gdf[keep_cols].copy()
-            result = self._to_gcj02_output(result_gdf)
+            result = result_gdf if preserve_input_crs else self._to_gcj02_output(result_gdf)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("keep_fields 计算失败")
@@ -1514,6 +1540,7 @@ class SpatialAnalyzer:
         gdf: gpd.GeoDataFrame,
         old_name: str,
         new_name: str,
+        *, preserve_input_crs: bool = False,
     ) -> dict:
         """重命名字段：修改字段名，新旧不同才执行。
 
@@ -1526,7 +1553,7 @@ class SpatialAnalyzer:
             {"status": "success", "data": GeoDataFrame} 或 {"status": "error", "message": str}
         """
         try:
-            wgs84_gdf = self._ensure_wgs84(gdf)
+            wgs84_gdf = gdf if preserve_input_crs else self._ensure_wgs84(gdf)
             if old_name == new_name:
                 return {"status": "error", "message": "新旧字段名相同，无需重命名"}
             if old_name not in wgs84_gdf.columns:
@@ -1534,7 +1561,7 @@ class SpatialAnalyzer:
             if new_name in wgs84_gdf.columns and new_name != old_name:
                 return {"status": "error", "message": f"目标字段名 {new_name} 已存在"}
             result_gdf = wgs84_gdf.rename(columns={old_name: new_name})
-            result = self._to_gcj02_output(result_gdf)
+            result = result_gdf if preserve_input_crs else self._to_gcj02_output(result_gdf)
             return {"status": "success", "data": result}
         except Exception as e:
             logger.exception("rename_field 计算失败")

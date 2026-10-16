@@ -18,6 +18,9 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
+  const loadingRef = useRef(false);
+  const [loading, setLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   // Esc 关闭
@@ -37,6 +40,17 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
 
   useEffect(() => {
     let cancelled = false;
+    const destroyMap = () => {
+      for (const overlay of overlaysRef.current) {
+        try { overlay.setMap?.(null); } catch { /* noop */ }
+      }
+      overlaysRef.current = [];
+      try { mapRef.current?.destroy(); } catch { /* noop */ }
+      mapRef.current = null;
+    };
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
     loadAMap()
       .then((AMap: any) => {
         if (cancelled || !containerRef.current) return;
@@ -46,36 +60,38 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
           resizeEnable: true,
           features: ['bg', 'road', 'building', 'point'],
         });
+        // Retain the candidate before any controls or overlays can fail.
+        mapRef.current = map;
         map.addControl(new AMap.Scale());
         map.addControl(new AMap.ToolBar({ position: 'RB' }));
-        mapRef.current = map;
 
         overlaysRef.current = renderLayersOnMap(map, AMap, layers, bbox, { padding: [80, 80, 80, 80] });
+        loadingRef.current = false;
+        setLoading(false);
       })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message || '地图加载失败');
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        destroyMap();
+        const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+        setError(message || '地图加载失败');
+        loadingRef.current = false;
+        setLoading(false);
       });
 
     return () => {
       cancelled = true;
-      for (const o of overlaysRef.current) {
-        try {
-          o.setMap?.(null);
-        } catch {
-          /* noop */
-        }
-      }
-      overlaysRef.current = [];
-      if (mapRef.current) {
-        try {
-          mapRef.current.destroy();
-        } catch {
-          /* noop */
-        }
-        mapRef.current = null;
-      }
+      loadingRef.current = false;
+      destroyMap();
     };
-  }, [layers, bbox]);
+  }, [layers, bbox, loadAttempt]);
+
+  const retryLoad = () => {
+    if (loadingRef.current || !error) return;
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
+    setLoadAttempt(attempt => attempt + 1);
+  };
 
   const hasHeatmap = layers.some((l) => l.type === 'heatmap');
 
@@ -102,10 +118,24 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
       </div>
       <div className="relative flex-1">
         <div ref={containerRef} className="absolute inset-0" />
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-900 text-center">
+        {loading && (
+          <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-900 text-center">
+            <div className="font-mono text-xs text-ink-300">正在加载地图…</div>
+            {loadAttempt > 0 && (
+              <button type="button" disabled className="rounded-md border border-ink-600 px-3 py-2 text-sm text-ink-400 disabled:cursor-wait disabled:opacity-50">
+                重试加载地图
+              </button>
+            )}
+          </div>
+        )}
+        {error && !loading && (
+          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-900 text-center">
             <div className="font-mono text-xs text-signal-error">地图加载失败</div>
             <div className="max-w-md text-sm text-ink-400">{error}</div>
+            <button type="button" onClick={retryLoad}
+              className="mt-2 rounded-md border border-ink-600 px-3 py-2 text-sm text-ink-200 transition hover:border-amber hover:text-amber">
+              重试加载地图
+            </button>
           </div>
         )}
 

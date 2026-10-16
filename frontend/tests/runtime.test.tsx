@@ -255,6 +255,19 @@ describe('Runtime projection', () => {
   });
 });
 describe('Runtime chat interactions', () => {
+  it('shows the failed multi-instruction diagnostic and unlocks the composer', async () => {
+    restore(snapshot('multi-failed', 'failed', { diagnostic: {
+      code: 'LLM_DRAFT_INVALID', message: '多项任务未生成有效执行计划，请重新提交。',
+    } }));
+    render(<ChatPanel sessionId="s" />);
+    await screen.findAllByText('多项任务未生成有效执行计划，请重新提交。');
+    expect(screen.getAllByText('LLM_DRAFT_INVALID')).toHaveLength(2);
+    const progress = screen.getByLabelText('任务运行状态');
+    expect(progress.closest('.workbench-chat')).toBe(screen.getByLabelText('Runtime 对话'));
+    expect(progress.compareDocumentPosition(screen.getByRole('textbox')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false);
+    expect(screen.queryByText('Run planning')).toBeNull();
+  });
   it('continues streaming a second Run after the first one completes', async () => {
     nextSnapshots = [snapshot('first', 'completed'), snapshot('second')]; render(<ChatPanel sessionId="s" />);
     await screen.findByRole('button', { name: '发送' });

@@ -22,17 +22,17 @@ def client_for(monkeypatch, statuses):
         def __init__(self, **kwargs):
             pass
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *args):
+        async def __aexit__(self, *args):
             pass
 
-        def post(self, endpoint, *, json, headers):
+        async def post(self, endpoint, *, json, headers):
             posted.append(copy.deepcopy(json))
             return Response(statuses.pop(0))
 
-    monkeypatch.setattr("app.runtime.llm_planner.httpx.Client", Client)
+    monkeypatch.setattr("app.runtime.llm_planner.httpx.AsyncClient", Client)
     monkeypatch.setattr("app.runtime.llm_planner.time.sleep", lambda _: None)
     return posted
 

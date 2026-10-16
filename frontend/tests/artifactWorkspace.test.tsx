@@ -34,6 +34,31 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('ArtifactWorkspace', () => {
+  it('links the producer only when that task is present in the displayed run', async () => {
+    const item = install(artifact('lineage', 'File', { media_type: 'application/octet-stream' }));
+    const task = { task_id: 'task_buffer_01', task_key: '生成缓冲区', status: 'succeeded', attempts: 1 };
+    const view = render(<ArtifactWorkspace artifacts={[item]} tasks={[task]} onUse={() => {}} />);
+    expect(await screen.findByRole('link', { name: '生成缓冲区' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: '生成缓冲区' }).getAttribute('href')).toBe('#runtime-task-task_buffer_01');
+    view.rerender(<ArtifactWorkspace artifacts={[item]} tasks={[{ ...task, task_id: 'different-run-task' }]} onUse={() => {}} />);
+    expect(screen.queryByRole('link', { name: '生成缓冲区' })).toBeNull();
+    expect(screen.getByText('task_buffer_01')).toBeTruthy();
+  });
+
+  it('selects the latest final result instead of an older upload, while preserving manual selection', async () => {
+    const upload = install(artifact('old-upload'), geojson());
+    const result = install(artifact('final-result', 'File', { media_type: 'application/geopackage+sqlite3' }));
+    const props = { artifacts: [upload, result], onUse: () => {}, preferredArtifactId: 'final-result', resultRunId: 'run-new' };
+    const view = render(<ArtifactWorkspace {...props} />);
+    await waitFor(() => expect(screen.getByRole('link', { name: /下载原始成果/ }).getAttribute('href')).toBe('/api/artifacts/final-result/content'));
+    fireEvent.click(screen.getByRole('button', { name: '选择成果 old-upload' }));
+    await waitFor(() => expect(screen.getByRole('link', { name: /下载原始成果/ }).getAttribute('href')).toBe('/api/artifacts/old-upload/content'));
+    view.rerender(<ArtifactWorkspace {...props} artifacts={[upload, { ...result, byte_size: 4096 }]} />);
+    expect(screen.getByRole('link', { name: /下载原始成果/ }).getAttribute('href')).toBe('/api/artifacts/old-upload/content');
+    view.rerender(<ArtifactWorkspace {...props} resultRunId="next-run" />);
+    await waitFor(() => expect(screen.getByRole('link', { name: /下载原始成果/ }).getAttribute('href')).toBe('/api/artifacts/final-result/content'));
+  });
+
   it('shows an honest empty state without fetching invented results', () => {
     render(<ArtifactWorkspace artifacts={[]} onUse={() => {}} />);
     expect(screen.getByText('成果将出现在这里')).toBeTruthy();

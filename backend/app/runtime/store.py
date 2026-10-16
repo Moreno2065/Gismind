@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import heapq
 import re
 import uuid
 from contextlib import contextmanager
@@ -47,6 +48,41 @@ TASK_ATTEMPT_TRANSITIONS = {
     "cancelled": set(),
 }
 _MISSING_EXECUTOR_IDENTITY = object()
+
+
+def _public_task_parameter(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    """Bound the explanatory projection; never publish credentials or payload bodies."""
+    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    if normalized in {"key", "auth", "dsn", "connectionstring"} or any(part in normalized for part in (
+        "password", "secret", "token", "apikey", "privatekey", "accesskey", "authorization", "credential", "cookie", "header",
+    )):
+        return "[redacted]"
+    if normalized in {"code", "source", "script", "body", "payload", "content", "data", "features", "geometry", "coordinates"} or normalized.endswith(("code", "script", "body")):
+        return "[content omitted]"
+    if depth > 3:
+        return "[nested content omitted]"
+    if isinstance(value, dict):
+        if value.get("kind") == "EPSG":
+            from .contracts import validate_crs_value
+            try:
+                return dict(validate_crs_value(value))
+            except ValueError:
+                pass
+        result = {str(k): _public_task_parameter(v, key=str(k), depth=depth + 1) for k, v in list(value.items())[:20]}
+        if len(value) > 20:
+            result["…"] = f"{len(value) - 20} more fields omitted"
+        return result if len(json.dumps(result, ensure_ascii=False)) < 5000 else {"…": "[large object omitted]"}
+    if isinstance(value, list):
+        result = [_public_task_parameter(item, depth=depth + 1) for item in value[:10]]
+        if len(value) > 10:
+            result.append(f"[{len(value) - 10} more items omitted]")
+        return result if len(json.dumps(result, ensure_ascii=False)) < 5000 else ["[large array omitted]"]
+    if isinstance(value, str):
+        # URLs can embed credentials, signed queries or arbitrary request data.
+        if re.search(r"[a-z][a-z0-9+.-]*://", value, re.I):
+            return "[URL omitted]"
+        return value if len(value) <= 240 else "[long text omitted]"
+    return value if value is None or isinstance(value, (int, float, bool)) else "[content omitted]"
 
 
 def _json(value: Any) -> str:
@@ -424,6 +460,105 @@ class RuntimeStore:
     def get_run(self, run_id: str) -> dict | None:
         return self._read(lambda c: _row(c.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()))
 
+    @staticmethod
+    def _failure_diagnostic_conn(c, run_id: str) -> dict | None:
+        rows = c.execute(
+            "SELECT payload_json FROM events WHERE run_id=? AND event_type IN ('run.failed','plan.rejected','task.failed','task.empty') ORDER BY event_id DESC LIMIT 64",
+            (run_id,),
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row[0])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            detail = payload.get("diagnostic")
+            diagnostic = dict(detail) if isinstance(detail, dict) else {}
+            code = diagnostic.get("code") or payload.get("code") or payload.get("error_code")
+            message = diagnostic.get("message") or payload.get("message") or diagnostic.get("error")
+            if code or message:
+                return {**diagnostic, "code": code or "RUN_FAILED", "message": message or str(code)}
+        return None
+
+    @staticmethod
+    def _task_display_order_conn(c, plan_id: str | None) -> dict[str, int]:
+        """Stable dependency-first presentation, independent of canonical IR order."""
+        rows = c.execute("SELECT task_id,task_key FROM tasks WHERE plan_id=?", (plan_id,)).fetchall()
+        keys = {row[0]: row[1] for row in rows}
+        dependencies = {task_id: set() for task_id in keys}
+        children = {task_id: set() for task_id in keys}
+        for row in c.execute(
+            """SELECT d.task_id,d.depends_on_task_id FROM task_dependencies d
+               JOIN tasks t ON t.task_id=d.task_id WHERE t.plan_id=?""", (plan_id,)
+        ):
+            if row[0] in keys and row[1] in keys:
+                dependencies[row[0]].add(row[1])
+                children[row[1]].add(row[0])
+        ready = [(keys[task_id], task_id) for task_id, parents in dependencies.items() if not parents]
+        heapq.heapify(ready)
+        ordered = []
+        while ready:
+            _, task_id = heapq.heappop(ready)
+            ordered.append(task_id)
+            for child in children[task_id]:
+                dependencies[child].discard(task_id)
+                if not dependencies[child]:
+                    heapq.heappush(ready, (keys[child], child))
+        # Invalid historical graphs must remain inspectable. This fallback is
+        # presentation-only; it never changes validation or execution readiness.
+        ordered.extend(sorted(set(keys) - set(ordered), key=lambda task_id: (keys[task_id], task_id)))
+        return {task_id: index for index, task_id in enumerate(ordered)}
+
+    @staticmethod
+    def _task_details_conn(c, plan_id: str | None) -> dict[str, dict]:
+        """Project persisted execution facts without exposing executor identities or code."""
+        details = {}
+        for row in c.execute("SELECT task_id,task_json,next_retry_at FROM tasks WHERE plan_id=?", (plan_id,)):
+            try:
+                task = json.loads(row[1] or "{}")
+            except (ValueError, TypeError):
+                task = {}
+            task = task if isinstance(task, dict) else {}
+            policy = task.get("retry_policy")
+            details[row[0]] = {
+                "parameters": _public_task_parameter(task.get("params", {})),
+                "inputs": [], "resolved_inputs": [], "dependencies": [], "outputs": [],
+                "latest_attempt": None, "next_retry_at": row[2],
+                "max_attempts": policy.get("max_attempts") if isinstance(policy, dict) else None,
+            }
+        for row in c.execute(
+            """SELECT b.task_id,b.input_name,b.ordinal,b.source_artifact_id,b.source_task_id,
+                      source.task_key,b.source_port,b.source_ordinal,b.source_all
+               FROM task_input_bindings b JOIN tasks t ON t.task_id=b.task_id
+               LEFT JOIN tasks source ON source.task_id=b.source_task_id
+               WHERE t.plan_id=? ORDER BY b.input_name,b.ordinal""", (plan_id,)
+        ):
+            details[row[0]]["inputs"].append({"name": row[1], "ordinal": row[2], "artifact_id": row[3],
+                "source_task_id": row[4], "source_task_key": row[5], "source_port": row[6],
+                "source_ordinal": row[7], "selection": "all" if row[8] else "one"})
+        for table, column, field in (("task_inputs", "input_name", "resolved_inputs"), ("task_outputs", "output_name", "outputs")):
+            for row in c.execute(
+                f"SELECT x.task_id,x.{column},x.ordinal,x.artifact_id FROM {table} x JOIN tasks t ON t.task_id=x.task_id WHERE t.plan_id=? ORDER BY x.{column},x.ordinal",
+                (plan_id,),
+            ):
+                details[row[0]][field].append({"name": row[1], "ordinal": row[2], "artifact_id": row[3]})
+        for row in c.execute(
+            """SELECT d.task_id,source.task_id,source.task_key FROM task_dependencies d
+               JOIN tasks t ON t.task_id=d.task_id JOIN tasks source ON source.task_id=d.depends_on_task_id
+               WHERE t.plan_id=? ORDER BY source.task_key""", (plan_id,)
+        ):
+            details[row[0]]["dependencies"].append({"task_id": row[1], "task_key": row[2]})
+        for row in c.execute(
+            """SELECT a.task_id,a.attempt_no,a.status,a.started_at,a.finished_at,a.error_code
+               FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id
+               WHERE t.plan_id=? AND a.attempt_no=(SELECT MAX(latest.attempt_no) FROM task_attempts latest WHERE latest.task_id=a.task_id)""",
+            (plan_id,),
+        ):
+            details[row[0]]["latest_attempt"] = {key: row[index] for index, key in enumerate(
+                ("attempt_no", "status", "started_at", "finished_at", "error_code"), start=1)}
+        return details
+
     def get_run_snapshot(self, run_id: str) -> dict | None:
         """Read a Run projection and its event high-water mark atomically.
 
@@ -443,11 +578,22 @@ class RuntimeStore:
             ).fetchone() if run.get("active_plan_id") else None
             task_rows = c.execute(
                 """SELECT t.task_id,t.task_key,t.status,
-                          (SELECT COUNT(*) FROM task_attempts a WHERE a.task_id=t.task_id),t.blocked_reason
+                          (SELECT COUNT(*) FROM task_attempts a WHERE a.task_id=t.task_id),t.blocked_reason,
+                          t.tool_name,
+                          (SELECT a.error_code FROM task_attempts a WHERE a.task_id=t.task_id ORDER BY a.attempt_no DESC LIMIT 1),
+                          (SELECT a.error FROM task_attempts a WHERE a.task_id=t.task_id ORDER BY a.attempt_no DESC LIMIT 1)
                    FROM tasks t JOIN plans p ON p.plan_id=t.plan_id
                    WHERE p.run_id=? AND p.plan_id=(SELECT active_plan_id FROM runs WHERE run_id=?)
                    ORDER BY t.created_at,t.task_id""",
                 (run_id, run_id),
+            ).fetchall()
+            task_order = self._task_display_order_conn(c, run.get("active_plan_id"))
+            task_details = self._task_details_conn(c, run.get("active_plan_id"))
+            task_rows = sorted(task_rows, key=lambda row: task_order[row[0]])
+            planner_rows = c.execute(
+                """SELECT attempt_id,attempt_no,phase,status,error_code,error,created_at,finished_at
+                   FROM planner_attempts WHERE run_id=? AND lease_generation=? ORDER BY attempt_no""",
+                (run_id, run.get("planner_generation", 0)),
             ).fetchall()
             input_revision = c.execute(
                 "SELECT revision_id,revision FROM run_input_revisions WHERE run_id=? ORDER BY revision DESC LIMIT 1",
@@ -460,6 +606,19 @@ class RuntimeStore:
                    WHERE p.run_id=? AND p.plan_id=(SELECT active_plan_id FROM runs WHERE run_id=?)
                    ORDER BY o.created_at,o.artifact_id""",
                 (run_id, run_id),
+            ).fetchall()
+            final_output_rows = c.execute(
+                """SELECT DISTINCT a.artifact_id FROM task_outputs o
+                   JOIN tasks t ON t.task_id=o.task_id
+                   JOIN artifacts a ON a.artifact_id=o.artifact_id
+                   WHERE t.plan_id=? AND t.status='succeeded' AND a.validation_status='valid'
+                     AND (NOT EXISTS (
+                         SELECT 1 FROM task_dependencies d JOIN tasks consumer ON consumer.task_id=d.task_id
+                         WHERE d.depends_on_task_id=t.task_id AND consumer.plan_id=t.plan_id
+                     ) OR (t.tool_name='map.build' AND o.output_name='layer')
+                       OR (t.tool_name='file.export' AND o.output_name='file'))
+                   ORDER BY o.created_at,o.artifact_id""",
+                (run.get("active_plan_id"),),
             ).fetchall()
             last_event = c.execute(
                 "SELECT event_id FROM events WHERE run_id=? ORDER BY event_id DESC LIMIT 1", (run_id,)
@@ -488,13 +647,20 @@ class RuntimeStore:
                 "run": run,
                 "plan": dict(plan_row) if plan_row is not None else None,
                 "tasks": [
-                    {"task_id": row[0], "task_key": row[1], "status": row[2], "attempts": int(row[3] or 0), "error": row[4]}
+                    {"task_id": row[0], "task_key": row[1], "status": row[2], "attempts": int(row[3] or 0),
+                     "op": row[5], "display_order": task_order[row[0]], "details": task_details[row[0]],
+                     "error_code": row[6] if row[2] in {"failed", "retry_wait"} else None,
+                     "error": (row[7] or row[4]) if row[2] in {"failed", "retry_wait"} else row[4]}
                     for row in task_rows
                 ],
+                "planning_attempts": [dict(row) for row in planner_rows],
                 "input_revision": (input_revision[0], input_revision[1]) if input_revision else None,
                 "output_artifacts": [self._decode_artifact_metadata(dict(row)) for row in output_rows],
+                "final_artifact_ids": [row[0] for row in final_output_rows],
                 "last_event_id": int(last_event[0]) if last_event else 0,
                 "awaiting_input": awaiting_payload,
+                "diagnostic": (awaiting_payload.get("diagnostic") if isinstance(awaiting_payload, dict) else
+                               self._failure_diagnostic_conn(c, run_id) if run.get("status") == "failed" else None),
                 "pending_confirmations": [
                     {"confirmation_id": row[0], "task_id": row[1], "task_key": row[2], "action_hash": row[3]}
                     for row in confirmation_rows
@@ -663,7 +829,9 @@ class RuntimeStore:
                 "plan_id": plan_id, "plan_version": version, "input_revision": ir.input_revision,
                 "plan_hash": ir.plan_hash, "task_count": len(ir.tasks),
             })
-            for task in ir.tasks:
+            display_order = self._task_display_order_conn(c, plan_id)
+            task_details = self._task_details_conn(c, plan_id)
+            for task in sorted(ir.tasks, key=lambda item: display_order[task_ids[item.task_key]]):
                 has_dependency = any(
                     isinstance(ref, TaskOutputRef)
                     for value in task.inputs.values()
@@ -672,6 +840,8 @@ class RuntimeStore:
                 requires_confirmation = task.task_key in confirmation_ids
                 self._append_event_conn(c, run_id, "task.created", {
                     "task_id": task_ids[task.task_key], "task_key": task.task_key,
+                    "display_order": display_order[task_ids[task.task_key]],
+                    "details": task_details[task_ids[task.task_key]],
                     "op": task.op, "initial_status": "blocked" if has_dependency or requires_confirmation else "ready",
                 })
             # Event append increments updated_at/last_event_seq.  Set the
@@ -722,7 +892,7 @@ class RuntimeStore:
                  "requested", provider, model, prompt_version, catalog_hash, request_hash, now),
             )
             self._append_event_conn(c, run_id, "planner.requested", {
-                "attempt_id": attempt_id, "phase": phase, "input_revision": input_revision,
+                "attempt_id": attempt_id, "attempt_no": attempt_no, "phase": phase, "input_revision": input_revision,
                 "provider": provider, "model": model,
             })
         self._write(op)
@@ -737,7 +907,7 @@ class RuntimeStore:
             raise ValueError("planner attempt status is invalid")
 
         def op(c):
-            row = c.execute("SELECT run_id,status FROM planner_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
+            row = c.execute("SELECT run_id,status,phase,attempt_no FROM planner_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
             if row is None:
                 raise ValueError("unknown planner attempt")
             self._assert_planner_fence_conn(c, row[0], planner_claim)
@@ -750,7 +920,8 @@ class RuntimeStore:
                  _json(diagnostics), _json(usage), latency_ms, error_code, error, utc_now(), attempt_id),
             )
             self._append_event_conn(c, row[0], "planner.responded" if status == "succeeded" else "planner.failed", {
-                "attempt_id": attempt_id, "status": status, "error_code": error_code,
+                "attempt_id": attempt_id, "attempt_no": row[3], "phase": row[2], "status": status,
+                "error_code": error_code, "message": error,
             })
         self._write(op)
         return self._read(lambda c: _row(c.execute("SELECT * FROM planner_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()))
@@ -782,7 +953,11 @@ class RuntimeStore:
             )
             self._append_event_conn(c, run_id, "run.status_changed", {"run_id": run_id, "status": target})
             if target == "failed":
-                self._append_event_conn(c, run_id, "run.failed", {"run_id": run_id, "status": target})
+                detail = diagnostics if isinstance(diagnostics, dict) else {"message": str(diagnostics)}
+                self._append_event_conn(c, run_id, "run.failed", {
+                    "run_id": run_id, "status": target,
+                    "diagnostic": {**detail, "code": code, "message": detail.get("message") or detail.get("error") or code},
+                })
         self._write(op)
         return self.get_run(run_id)
 
@@ -1458,6 +1633,17 @@ class RuntimeStore:
             status = run[1]
             if status not in {"completed", "failed", "cancelled"}:
                 self._append_event_conn(c, run_id, "run.cancel_requested", {"run_id": run_id})
+                planning_attempts = c.execute(
+                    "SELECT attempt_id FROM planner_attempts WHERE run_id=? AND status='requested'", (run_id,),
+                ).fetchall()
+                for planning_attempt in planning_attempts:
+                    c.execute(
+                        "UPDATE planner_attempts SET status='failed',error_code='RUN_CANCELLED',error='RUN_CANCELLED',finished_at=? WHERE attempt_id=? AND status='requested'",
+                        (now, planning_attempt[0]),
+                    )
+                    self._append_event_conn(c, run_id, "planner.failed", {
+                        "attempt_id": planning_attempt[0], "status": "failed", "error_code": "RUN_CANCELLED",
+                    })
                 if status != "cancelling":
                     c.execute(
                         """UPDATE runs SET status='cancelling',run_version=run_version+1,
@@ -1654,7 +1840,7 @@ class RuntimeStore:
             if run[0] in {"completed", "failed", "cancelled", "cancelling", "awaiting_input"}:
                 return run[0]
             rows = c.execute(
-                "SELECT t.status FROM tasks t JOIN plans p ON p.plan_id=t.plan_id "
+                "SELECT t.status,t.task_id,t.task_json FROM tasks t JOIN plans p ON p.plan_id=t.plan_id "
                 "WHERE p.run_id=? AND (p.plan_id=? OR ? IS NULL)",
                 (run_id, run[1], run[1]),
             ).fetchall()
@@ -1664,6 +1850,39 @@ class RuntimeStore:
             target = "failed" if "failed" in statuses else "completed" if all(value == "succeeded" for value in statuses) else None
             if target is None:
                 return run[0]
+            diagnostic = None
+            if target == "completed":
+                missing = []
+                for row in rows:
+                    try:
+                        frozen = json.loads(row[2]) if row[2] else {}
+                    except (TypeError, ValueError):
+                        frozen = {}
+                    frozen = frozen if isinstance(frozen, dict) else {}
+                    outputs = frozen.get("outputs")
+                    counts = dict(c.execute(
+                        "SELECT o.output_name,COUNT(*) FROM task_outputs o JOIN artifacts a ON a.artifact_id=o.artifact_id WHERE o.task_id=? AND a.validation_status='valid' GROUP BY o.output_name",
+                        (row[1],),
+                    ).fetchall())
+                    if isinstance(outputs, list):
+                        for spec in outputs:
+                            if not isinstance(spec, dict):
+                                missing.append({"task_id": row[1], "port": None})
+                                continue
+                            minimum = spec.get("min_items", 1)
+                            if type(minimum) is not int or counts.get(spec.get("port"), 0) < minimum:
+                                missing.append({"task_id": row[1], "port": spec.get("port")})
+                    allows_none = isinstance(outputs, list) and frozen.get("empty_policy") == "allow" and all(
+                        isinstance(spec, dict) and spec.get("min_items", 1) == 0 for spec in outputs
+                    )
+                    if not counts and not allows_none and not any(item["task_id"] == row[1] for item in missing):
+                        missing.append({"task_id": row[1], "port": None})
+                if missing:
+                    target = "failed"
+                    diagnostic = {"code": "RUN_OUTPUTS_MISSING", "message": "任务未产生合同要求的有效成果，无法标记为完成。",
+                                  "details": {"missing_outputs": missing}}
+            if target == "failed" and diagnostic is None:
+                diagnostic = self._failure_diagnostic_conn(c, run_id)
             updated = c.execute(
                 "UPDATE runs SET status=?,run_version=run_version+1,updated_at=? "
                 "WHERE run_id=? AND status NOT IN ('completed','failed','cancelled','cancelling','awaiting_input')",
@@ -1671,7 +1890,10 @@ class RuntimeStore:
             )
             if updated.rowcount == 1:
                 self._append_event_conn(c, run_id, "run.status_changed", {"run_id": run_id, "status": target})
-                self._append_event_conn(c, run_id, f"run.{target}", {"run_id": run_id, "status": target})
+                terminal_payload = {"run_id": run_id, "status": target}
+                if diagnostic is not None:
+                    terminal_payload["diagnostic"] = diagnostic
+                self._append_event_conn(c, run_id, f"run.{target}", terminal_payload)
             return c.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()[0]
         return self._write(op)
 

@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     # lease for the generic LLM maximum.
     APP_PLANNER_MAX_TOKENS: int = 1536
     APP_PLANNER_TIMEOUT_S: int = 45
+    APP_PLANNER_TOTAL_TIMEOUT_S: float = 90.0
+    APP_PLANNER_MAX_HTTP_CALLS: int = 6
 
     # 上传
     UPLOAD_MAX_SIZE: int = 50

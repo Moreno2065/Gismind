@@ -1,0 +1,2 @@
+# Exact historical cancellation predicates are tiny regression fixtures.
+tools/map_acceptance/fixtures/*.py -text

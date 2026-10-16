@@ -23,9 +23,10 @@ from .llm_planner import (
     OpenAICompatiblePlanner, PlannerCall, PlannerError, PlannerRequest,
     _ambiguous_rename_source, _ambiguous_rename_target, _inspected_vector_fields,
     _first_unavailable_artifact_ref, _semantic_fact_mismatch,
-    _verified_buffer_distance_m, candidate_catalog,
+    _verified_buffer_distance_m, candidate_catalog, controlled_repair_catalog,
 )
 from .process import check_resource_budget, enforce_resource_limits, kill_process_tree, release_resource_limits
+from .planning_control import PlanningBudget, current_planning_budget
 
 
 def _planning_diagnostic(exc: Exception) -> dict[str, Any]:
@@ -175,11 +176,11 @@ def _process_creation_time(pid: int) -> float | None:
         try:
             created = wintypes.FILETIME()
             exited = wintypes.FILETIME()
-            kernel = wintypes.FILETIME()
+            kernel_time = wintypes.FILETIME()
             user = wintypes.FILETIME()
             ok = kernel.GetProcessTimes(
                 wintypes.HANDLE(handle), ctypes.byref(created), ctypes.byref(exited),
-                ctypes.byref(kernel), ctypes.byref(user),
+                ctypes.byref(kernel_time), ctypes.byref(user),
             )
             if not ok:
                 return None
@@ -461,6 +462,18 @@ class RuntimeQueue:
             if row is None:
                 return None
             generation = int(row[1]) + 1
+            abandoned = conn.execute(
+                "SELECT attempt_id FROM planner_attempts WHERE run_id=? AND lease_generation<? AND status='requested'",
+                (row[0], generation),
+            ).fetchall()
+            for old_attempt in abandoned:
+                conn.execute(
+                    "UPDATE planner_attempts SET status='failed',error_code='STALE_PLANNER_LEASE',error='STALE_PLANNER_LEASE',finished_at=? WHERE attempt_id=? AND status='requested'",
+                    (now, old_attempt[0]),
+                )
+                self.runtime._append_event_conn(conn, row[0], "planner.failed", {
+                    "attempt_id": old_attempt[0], "status": "failed", "error_code": "STALE_PLANNER_LEASE",
+                })
             conn.execute(
                 "UPDATE runs SET status='planning',planner_lease_owner=?,planner_lease_token=?,planner_lease_expires_at=?,planner_generation=?,run_version=run_version+1,updated_at=? WHERE run_id=?",
                 (owner, token, expires, generation, now, row[0]),
@@ -819,6 +832,8 @@ class RuntimeSupervisor:
         self._worker_thread: threading.Thread | None = None
         self._worker_id: str | None = None
         self._planner_claim_refresh: dict[str, RunClaim] = {}
+        self._prefer_task: dict[str, bool] = {}
+        self._worker_stop_events: dict[str, Any] = {}
         self.registry = registry or ToolContractRegistry.with_builtins()
         # The default is a real provider boundary, not a deterministic route
         # table.  Tests inject a contract-shaped planner explicitly.
@@ -1196,14 +1211,30 @@ class RuntimeSupervisor:
         """
         stop = threading.Event()
         failures: list[Exception] = []
+        budget = current_planning_budget.get()
         interval = max(0.001, min(self.heartbeat_interval, self.queue.lease_seconds / 3.0))
+        poll_interval = min(interval, 0.1)
 
         def renew() -> None:
-            while not stop.wait(interval):
+            next_renewal = time.monotonic() + interval
+            while not stop.wait(poll_interval):
                 try:
-                    current[0] = self.queue.heartbeat_planning(current[0])
+                    if self._shutdown_event.is_set() and budget is not None:
+                        budget.cancel("WORKER_SHUTDOWN")
+                        return
+                    if time.monotonic() >= next_renewal:
+                        current[0] = self.queue.heartbeat_planning(current[0])
+                        next_renewal = time.monotonic() + interval
+                    else:
+                        # Cancellation checks are read-only; responsiveness
+                        # must not multiply the configured durable lease writes.
+                        self.runtime._read(lambda conn: self.runtime._assert_planner_fence_conn(
+                            conn, claim.run_id, current[0],
+                        ))
                 except Exception as exc:  # the owner may have gone stale
                     failures.append(exc)
+                    if budget is not None:
+                        budget.cancel("STALE_PLANNER_LEASE")
                     return
 
         # Renew synchronously before handing control to an external provider;
@@ -1216,7 +1247,11 @@ class RuntimeSupervisor:
         )
         thread.start()
         try:
+            if budget is not None:
+                budget.check()
             value = callback()
+            if budget is not None:
+                budget.check()
             # A provider can return just after the periodic heartbeat thread
             # missed its final interval (especially with very short test or
             # local leases).  Renew synchronously at the hand-off boundary so
@@ -1227,9 +1262,9 @@ class RuntimeSupervisor:
         finally:
             stop.set()
             thread.join(timeout=max(1.0, interval * 2.0))
+            self._planner_claim_refresh[claim.run_id] = current[0]
         if failures:
             raise RuntimeError("STALE_PLANNER_LEASE") from failures[0]
-        self._planner_claim_refresh[claim.run_id] = current[0]
         return value
 
     @staticmethod
@@ -1269,8 +1304,26 @@ class RuntimeSupervisor:
         buffers = [step for step in draft.tasks if step.op == "vector.buffer"]
         if not buffers:
             return
+        from .goal_requirements import build_goal_requirements
+        requirements = build_goal_requirements(request.user_goal,
+            (*request.input_artifacts, *request.prior_artifacts), request.revision_patch)
+        ordered_buffers = [item for stage in requirements.get('ordered_stages', [])
+                           for item in stage['requirements'] if item['op'] == 'vector.buffer']
+        grouped_buffers = [item for group in requirements.get('instruction_groups', [])
+                           for item in group.get('operations', []) if item['op'] == 'vector.buffer']
+        if len(ordered_buffers) > 1 or (len(grouped_buffers) > 1 and all(
+                'distance_m' in item.get('params', {}) for item in grouped_buffers)):
+            # Multiple occurrences are checked against their own stage/group
+            # facts by the compiler, including scoped corrections and missing
+            # facts. An op-wide scalar would overwrite unrelated distances.
+            return
         expected_m = _verified_buffer_distance_m(request)
         if expected_m is None:
+            if grouped_buffers and all("distance_m" in item.get("params", {}) for item in grouped_buffers):
+                # Distinct, explicitly grounded instructions are not one
+                # ambiguous distance. The compiler checks each group's exact
+                # parameters AND its own final dataflow before activation.
+                return
             question = "请明确本次缓冲距离及单位（米或公里）；如有多个距离，请说明用于缓冲的那个。"
             raise cls._rename_clarification("planner.buffer_distance", question, "缓冲距离及单位")
         for step in buffers:
@@ -1358,7 +1411,12 @@ class RuntimeSupervisor:
         claim = self.queue.claim_planning_run(worker_id, run_id=run_id)
         if claim is None:
             return None
+        budget = PlanningBudget(getattr(self.planner, "total_timeout_seconds", 90.0),
+                                getattr(self.planner, "max_http_calls", 6),
+                                stop_event=self._worker_stop_events.get(worker_id, self._shutdown_event))
+        budget_token = current_planning_budget.set(budget)
         attempt = None
+        repair_used = False
         attempt_response: dict[str, Any] = {}
         try:
             request = self._planner_request(claim.run_id)
@@ -1390,6 +1448,8 @@ class RuntimeSupervisor:
                 # the retry observable and prevents an unrecorded hidden call.
                 if initial_error.code != "LLM_DRAFT_INVALID" or not callable(repair):
                     raise
+                repair_used = True
+                claim = self._planner_claim_refresh.pop(claim.run_id, claim)
                 diagnostic = _planning_diagnostic(initial_error)
                 self.runtime.finish_planner_attempt(
                     attempt["attempt_id"], planner_claim=claim, status="failed",
@@ -1430,7 +1490,9 @@ class RuntimeSupervisor:
             self._require_executable_draft(draft)
             compiler = Compiler(
                 self.registry, artifact_lookup=self.runtime.get_artifact,
-                policy={"trusted_user_goal": request.user_goal},
+                policy={"trusted_user_goal": request.user_goal,
+                        "visible_artifacts": [*request.input_artifacts, *request.prior_artifacts],
+                        "revision_patch": request.revision_patch},
             )
             try:
                 self._require_visible_artifact_refs(draft, request)
@@ -1443,8 +1505,9 @@ class RuntimeSupervisor:
                 # ask repair to invent a CRS or other required business value.
                 raise
             except (CompileError, ValueError) as compile_error:
-                if not callable(repair):
+                if not callable(repair) or repair_used:
                     raise
+                repair_used = True
                 diagnostic = _planning_diagnostic(compile_error)
                 self.runtime.finish_planner_attempt(
                     attempt["attempt_id"], planner_claim=claim, status="failed",
@@ -1454,18 +1517,39 @@ class RuntimeSupervisor:
                     error_code=getattr(compile_error, "code", "PLAN_COMPILE_FAILED"), error=str(compile_error),
                 )
                 attempt_response = {}
+                repair_catalog = request_catalog
+                repair_options: dict[str, Any] = {}
+                if isinstance(self.planner, OpenAICompatiblePlanner):
+                    repair_catalog = controlled_repair_catalog(self.registry, request, diagnostic, base=request_catalog)
+                    additions = tuple(name for name in repair_catalog.operation_ids if name not in request_catalog.operation_ids)
+                    if additions:
+                        repair_options["catalog_expansion"] = additions
+                    elif diagnostic.get("code") == "GOAL_REQUIREMENT_MISSING":
+                        required = diagnostic.get("details", {}).get("requirement", {}).get("op")
+                        if required and required not in request_catalog.operation_ids:
+                            # The original diagnostic is already durable. A
+                            # second call cannot satisfy an absent mandatory
+                            # operation without a permitted bounded expansion.
+                            raise compile_error
                 repaired_attempt = self.runtime.create_planner_attempt(
                     claim.run_id, planner_claim=claim, input_revision=request.input_revision, attempt_no=2,
                     phase="repair", provider=identity[0], model=identity[1], prompt_version=identity[2],
-                    catalog_hash=identity[3], request_hash=request_hash,
+                    catalog_hash=repair_catalog.catalog_hash, request_hash=request_hash,
                 )
                 attempt = repaired_attempt
                 repaired_raw = self._call_planner_with_lease_heartbeat(
                     claim,
-                    lambda: repair(request, rejected_draft=draft, diagnostic=diagnostic),
+                    lambda: repair(request, rejected_draft=draft, diagnostic=diagnostic, **repair_options),
                 )
                 claim = self._planner_claim_refresh.pop(claim.run_id, claim)
                 draft, metadata = self._coerce_planner_call(repaired_raw, request, fallback=identity)
+                if isinstance(self.planner, OpenAICompatiblePlanner) and isinstance(repaired_raw, PlannerCall) and metadata["catalog_hash"] != repair_catalog.catalog_hash:
+                    attempt_response = {
+                        "response_hash": metadata["response_hash"], "draft": draft.model_dump(mode="json"),
+                        "usage": metadata["usage"], "latency_ms": metadata["latency_ms"],
+                    }
+                    raise PlannerError("CATALOG_HASH_MISMATCH", "repair response catalog does not match its authorized prompt catalog")
+                request_catalog = repair_catalog
                 draft = draft.model_copy(update={
                     "run_id": claim.run_id, "input_revision": request.input_revision, "user_goal": request.user_goal,
                     "allowed_operation_ids": list(request_catalog.operation_ids), "catalog_hash": request_catalog.catalog_hash,
@@ -1481,6 +1565,7 @@ class RuntimeSupervisor:
                 self._guard_semantic_facts(request, draft)
                 plan = compiler.compile(draft)
                 attempt = repaired_attempt
+            budget.check()
             self.runtime.finish_planner_attempt(
                 attempt["attempt_id"], planner_claim=claim, status="succeeded",
                 response_hash=metadata["response_hash"], draft=draft.model_dump(mode="json"),
@@ -1490,6 +1575,7 @@ class RuntimeSupervisor:
             self.enqueue_run(claim.run_id)
             return {"status": "planned", "run_id": claim.run_id}
         except AwaitingInputDiagnostic as exc:
+            claim = self._planner_claim_refresh.pop(claim.run_id, claim)
             if attempt is not None:
                 try:
                     self.runtime.finish_planner_attempt(
@@ -1499,13 +1585,19 @@ class RuntimeSupervisor:
                     )
                 except (RuntimeError, ValueError):
                     pass
-            self.runtime.reject_planning(
-                claim.run_id, planner_claim=claim, code=exc.code,
-                diagnostics={"path": exc.path, "message": exc.message, "patch_schema": exc.details.get("patch_schema", {"type": "object"})},
-                awaiting_input=True,
-            )
+            try:
+                self.runtime.reject_planning(
+                    claim.run_id, planner_claim=claim, code=exc.code,
+                    diagnostics={"path": exc.path, "message": exc.message, "patch_schema": exc.details.get("patch_schema", {"type": "object"})},
+                    awaiting_input=True,
+                )
+            except RuntimeError as fence_error:
+                if str(fence_error) != "STALE_PLANNER_LEASE":
+                    raise
+                return {"status": "planning_lease_lost", "run_id": claim.run_id}
             return {"status": "awaiting_input", "run_id": claim.run_id}
         except Exception as exc:
+            claim = self._planner_claim_refresh.pop(claim.run_id, claim)
             code = getattr(exc, "code", None) or "PLAN_COMPILE_FAILED"
             diagnostic = _planning_diagnostic(exc)
             if attempt is not None:
@@ -1518,23 +1610,37 @@ class RuntimeSupervisor:
                 except (RuntimeError, ValueError):
                     pass
             try:
+                if code == "WORKER_SHUTDOWN":
+                    self.queue.release_planning(claim, status="queued")
+                    return {"status": "planning_interrupted", "run_id": claim.run_id}
                 self.runtime.reject_planning(
                     claim.run_id, planner_claim=claim, code=code,
                     diagnostics=diagnostic,
                 )
-            except RuntimeError:
+            except RuntimeError as fence_error:
                 # A lease lost to another worker is intentionally not turned
                 # into a failed run by this stale owner.
-                raise
+                if str(fence_error) != "STALE_PLANNER_LEASE":
+                    raise
+                return {"status": "planning_lease_lost", "run_id": claim.run_id}
             return {"status": "planning_failed", "run_id": claim.run_id}
+        finally:
+            self._planner_claim_refresh.pop(claim.run_id, None)
+            current_planning_budget.reset(budget_token)
 
     def run_once(self, worker_id: str, *, run_id: str | None = None) -> dict[str, Any] | None:
-        planned = self._plan_once(worker_id, run_id=run_id)
-        if planned is not None:
-            return planned
-        claim = self.queue.claim_next(worker_id, run_id=run_id)
+        claim = None
+        if self._prefer_task.get(worker_id, False):
+            claim = self.queue.claim_next(worker_id, run_id=run_id)
+        if claim is None:
+            planned = self._plan_once(worker_id, run_id=run_id)
+            if planned is not None:
+                self._prefer_task[worker_id] = True
+                return planned
+            claim = self.queue.claim_next(worker_id, run_id=run_id)
         if claim is None:
             return None
+        self._prefer_task[worker_id] = False
         start_won = False
         try:
             from .executor import RuntimeExecutor
@@ -1858,6 +1964,7 @@ class RuntimeSupervisor:
         self._recover_terminal_runs()
         next_terminal_recovery = time.monotonic() + 1.0
         completed = 0
+        self._worker_stop_events[worker_id] = stop_event
         try:
             while not stop_event.is_set() and (max_tasks is None or completed < max_tasks):
                 try:
@@ -1878,7 +1985,7 @@ class RuntimeSupervisor:
                             self._finalize_run_if_terminal(failed_run_id)
                         completed += 1
                         continue
-                    if isinstance(exc, RuntimeError) and str(exc) in {"WORKER_SHUTDOWN", "RUN_CANCELLED", "STALE_LEASE", "CANCELLED"}:
+                    if isinstance(exc, RuntimeError) and str(exc) in {"WORKER_SHUTDOWN", "RUN_CANCELLED", "STALE_LEASE", "STALE_PLANNER_LEASE", "CANCELLED"}:
                         continue
                     raise
                 if result is not None:
@@ -1893,6 +2000,7 @@ class RuntimeSupervisor:
                 self._wake_event.clear()
             return completed
         finally:
+            self._worker_stop_events.pop(worker_id, None)
             for process in list(self._active_processes.values()):
                 if process.is_alive():
                     _terminate_process_tree(process)

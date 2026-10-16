@@ -22,7 +22,54 @@ export interface RunTaskProjection {
   task_key: string;
   status: string;
   attempts: number;
+  op?: string | null;
+  display_order?: number;
+  error_code?: string | null;
   error?: string | null;
+  details?: TaskExecutionDetails;
+}
+
+export interface TaskArtifactReference {
+  name: string;
+  ordinal: number;
+  artifact_id: string;
+}
+
+export interface TaskExecutionDetails {
+  parameters: Record<string, unknown>;
+  inputs: Array<{
+    name: string;
+    ordinal: number;
+    artifact_id?: string | null;
+    source_task_id?: string | null;
+    source_task_key?: string | null;
+    source_port?: string | null;
+    source_ordinal?: number | null;
+    selection?: 'one' | 'all';
+  }>;
+  resolved_inputs: TaskArtifactReference[];
+  dependencies: Array<{ task_id: string; task_key: string }>;
+  outputs: TaskArtifactReference[];
+  latest_attempt?: {
+    attempt_no: number;
+    status: string;
+    started_at: string;
+    finished_at?: string | null;
+    error_code?: string | null;
+  } | null;
+  max_attempts?: number | null;
+  next_retry_at?: string | null;
+}
+
+export interface PlanningAttemptProjection {
+  attempt_id: string;
+  attempt_no: number;
+  phase: 'initial' | 'repair';
+  status: 'requested' | 'succeeded' | 'failed';
+  error_code?: string | null;
+  error?: string | null;
+  created_at?: string;
+  finished_at?: string | null;
 }
 
 export interface PendingConfirmation {
@@ -48,7 +95,9 @@ export interface RunSnapshot {
   active_input_revision?: { input_revision_id?: string; revision: number } | null;
   active_plan?: { plan_id: string; revision: number; plan_hash?: string | null } | null;
   tasks: RunTaskProjection[];
+  planning_attempts?: PlanningAttemptProjection[];
   output_artifacts: ArtifactSummary[];
+  final_artifact_ids?: string[];
   last_event_id: number;
   last_seq: number;
   awaiting_input?: Record<string, unknown> | null;

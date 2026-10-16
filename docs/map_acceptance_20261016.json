@@ -1,0 +1,98 @@
+{
+  "status": "COMPLETE_WITH_RETEST",
+  "passed": true,
+  "accepted_unique_maps": 1800,
+  "original_provider_cases": 2000,
+  "original_batch09_full_gate": true,
+  "original_complete_map_attempt": {
+    "audited": 1800,
+    "passed": 1799,
+    "failed": 1,
+    "full_map_gate": false,
+    "historical_report_rewritten": false
+  },
+  "repair": "Bind delayed SDK responses to their originating Playwright Request, not the current UI case",
+  "final_selection": {
+    "original_unaffected_context_cases": 1775,
+    "fresh_context_retest_cases": 25,
+    "fresh_context_retest_passed": 25,
+    "actual_attempt_case_count": 1825
+  },
+  "physical_counts": {
+    "maps": 1800,
+    "features": 5800,
+    "geometry_Polygon": 2400,
+    "rings": 2400,
+    "positions": 197800,
+    "geometry_Point": 3400,
+    "excluded_rasters": 200
+  },
+  "SDK_and_paint_counts": {
+    "getPath": 45600,
+    "SDK_positions": 3764612,
+    "SDK_snapshots": 35804,
+    "capture_diagnostics": 32204,
+    "accepted_target_measurements": 5800,
+    "target_measurements": 5801,
+    "final_per_feature_oracles": 5800,
+    "cases": 1800,
+    "features": 5800,
+    "causal_PNGs": 30404,
+    "mask_PNGs": 14000,
+    "getPosition": 71012,
+    "retained_rejected_measurements": 1
+  },
+  "maximum_coordinate_component_error_degrees": 4.999799685379003e-7,
+  "coordinate_tolerance_degrees": 0.000002,
+  "paint_timeout_seconds": 30,
+  "cleanup_timeout_seconds": 30,
+  "backend_regression": {
+    "tests": 3005,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 6,
+    "passed": 2999
+  },
+  "frontend_passed": 174,
+  "observer_regression": {
+    "tests": 924,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 924
+  },
+  "frontend_typecheck_build_and_bundle_check": "passed",
+  "runtime_post_delete_gate": "passed",
+  "budget": {
+    "max_cost_usd": 20,
+    "total_usd": 15.818015508,
+    "settled_usd": 15.382683108,
+    "reserved_usd": 0.4353324,
+    "remaining_usd": 4.181984492,
+    "planner_calls_reserved": 6367,
+    "max_planner_calls": 8767,
+    "pending_calls": 0,
+    "retained_calls": 13,
+    "settled_calls": 6354
+  },
+  "additional_provider_calls_for_maps": 0,
+  "evidence": {
+    "local_evidence_root": "backend/.gismind/release-main-final-20261016-01",
+    "original_provider_cohort": "backend/.gismind/zh-browser-2000-20261014-batch09",
+    "initial_map_run": "backend/.gismind/map-sdk-causal-full-20261016-07",
+    "fresh_context_retest": "backend/.gismind/map-sdk-causal-retest-20261016-01",
+    "raw_evidence_committed_to_git": false
+  },
+  "limits": "This is a completed final1800 acceptance with a disclosed isolated-context retest, not a pristine1800 first-pass result. Older partial/pilot runs were not added to the final cohort.",
+  "cleanup": {
+    "bytes_removed_from_project": 20135926114,
+    "old_map_directories": 27,
+    "obsolete_tool_and_cache_targets": 633,
+    "recycled_files": 256249,
+    "method": "Windows Recycle Bin",
+    "contents_recoverable": true,
+    "physical_disk_space_reclaimed_not_claimed": true,
+    "unlinked_temporary_junctions": 1,
+    "junction_target_data_untouched": true
+  }
+}

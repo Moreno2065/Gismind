@@ -211,6 +211,11 @@ def raster_values(case):
 
 def build_uploads(case, root):
     """Build actual decodable upload bytes; no Artifact is pre-published."""
+    allowed_formats = ({"csv"} if case.family in {"csvpoints", "bad_csv"} else
+                       {"tif"} if case.family == "rastercalc" else
+                       {"geojson"} if case.family == "broken_vector" else {"geojson", "gpkg", "zip"})
+    if case.file_format not in allowed_formats:
+        raise ValueError(f"unsupported upload format: {case.file_format}")
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     crs = dict(kind='EPSG', code=3857)

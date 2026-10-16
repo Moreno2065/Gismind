@@ -22,7 +22,8 @@ function statusFor(event: RuntimeEvent, current: TaskStatus): TaskStatus {
   if (eventStatus === 'failed') return 'failed';
   if (eventStatus === 'cancelled') return 'cancelled';
   if (event.type === 'task.leased' || event.type === 'task.started') return 'running';
-  if (event.type === 'task.completed' || event.type === 'task.empty') return 'succeeded';
+  if (event.type === 'task.empty') return event.payload.allowed === true ? 'succeeded' : 'failed';
+  if (event.type === 'task.completed') return 'succeeded';
   if (event.type === 'task.failed' || event.type === 'task.worker_lost' || event.type === 'task.resource_limit_exceeded') return 'failed';
   if (event.type === 'task.cancelled') return 'cancelled';
   if (event.type === 'run.awaiting_input') return 'awaiting_input';

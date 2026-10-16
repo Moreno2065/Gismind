@@ -287,6 +287,8 @@ def inspect_file(path: str | Path, filename: str, *, max_total=500 * 1024 * 1024
 
 def validate_declarations(facts: dict, declared_crs: dict | None, declared_bbox: list | None) -> None:
     actual = facts.get("crs")
+    if facts.get("artifact_type") == "Raster" and declared_crs and declared_crs.get("kind") == "GCJ02":
+        raise ValueError("栅格不支持 GCJ02 CRS 声明")
     if declared_crs and declared_crs.get("kind") != "GCJ02":
         _crs(_crs_name(declared_crs))
     if declared_crs and actual:

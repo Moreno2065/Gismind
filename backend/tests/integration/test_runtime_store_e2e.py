@@ -89,15 +89,16 @@ def test_executor_resolves_artifact_ref_to_cas_payload_and_synchronizes_states(t
         crs={"kind": "EPSG", "code": 4326}, schema={"fields": ["x"]},
     )
     called = []
+    original_buffer = handlers.handle_vector_buffer
 
-    def fake_buffer(**kwargs):
+    def checked_buffer(**kwargs):
         called.append(kwargs["vector"])
         assert kwargs["vector"]["data"] == source_payload
         assert kwargs["vector"]["schema"] == {"fields": ["x"]}
         assert kwargs["vector"]["crs"] == {"kind": "EPSG", "code": 4326}
-        return {"status": "success", "data": {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[119.9, 29.9], [120.1, 29.9], [120.1, 30.1], [119.9, 30.1], [119.9, 29.9]]]}, "properties": {"x": 1}}]}}
+        return original_buffer(**kwargs)
 
-    monkeypatch.setattr(handlers, "handle_vector_buffer", fake_buffer)
+    monkeypatch.setattr(handlers, "handle_vector_buffer", checked_buffer)
     registry = ToolContractRegistry.with_builtins()
     draft = PlannerDraft(
         run_id="r1", input_revision=1, user_goal="buffer", origin="e2e",
@@ -132,7 +133,7 @@ def test_executor_rolls_back_all_output_metadata_events_and_links_when_later_out
         "status": "success", "data": {"first": {"n": 1}, "second": {"n": 2}},
     })
     compiled = CompiledTask(
-        task_key="buffer", op="vector.buffer", contract_version="1.0.0", origin="planner",
+        task_key="buffer", op="vector.buffer", contract_version=ToolContractRegistry.with_builtins().get("vector.buffer").version, origin="planner",
         inputs={"vector": ArtifactRef(artifact_id=source["artifact_id"], type="Vector", crs={"kind": "EPSG", "code": 4326})},
         params={"distance_m": 1},
         outputs=[OutputSpec(port="first", artifact_type="File"), OutputSpec(port="second", artifact_type="File")],

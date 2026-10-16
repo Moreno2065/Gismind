@@ -238,77 +238,6 @@ class RasterAnalyzer:
             new_transform = Affine(*vals)
         return resized, new_transform
 
-    def _array_to_png_b64(
-        self,
-        arr_2d: np.ndarray,
-        transform: Any,
-        cmap_name: str = "terrain",
-        max_dim: int = 1024,
-        value_kind: str = "general",
-    ) -> dict:
-        """把 2D numpy 数组转 PNG base64 + bbox + 元数据（RasterLayer 格式）。
-
-        若 arr 任意维度 > max_dim，降采样到 max_dim（保持比例）。
-
-        Args:
-            arr_2d: 2D numpy 数组。
-            transform: rasterio Affine。
-            cmap_name: colormap 名称。
-            max_dim: 输出最大边长。
-            value_kind: 语义标签（'slope_degrees' | 'hillshade' | 'aspect' | 'general'）。
-
-        Returns:
-            RasterLayer dict：含 type/png_b64/bbox/width/height/value_range/colormap/value_kind。
-        """
-        # 降采样（如需）
-        arr_ds, transform_ds = self._downsample_array(arr_2d, transform, max_dim=max_dim)
-
-        # colormap
-        rgb = self._apply_colormap(arr_ds, cmap_name)
-
-        # 编码 PNG
-        from PIL import Image
-
-        img = Image.fromarray(rgb)
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-
-        # bbox = (minx, miny, maxx, maxy)
-        try:
-            bounds = rasterio.transform.array_bounds(arr_ds.shape[0], arr_ds.shape[1], transform_ds)
-        except Exception:
-            # fallback：直接用 4 个角推算
-            h, w = arr_ds.shape
-            c = transform_ds.c
-            f = transform_ds.f
-            minx = c
-            maxx = c + transform_ds.a * w + transform_ds.b * h
-            miny = f + transform_ds.d * w + transform_ds.e * h
-            maxy = f
-            # 规范 order
-            bounds = (min(minx, maxx), min(miny, maxy), max(minx, maxx), max(miny, maxy))
-
-        # value range（用降采样后的真实范围）
-        valid = arr_ds[~np.isnan(arr_ds)]
-        if valid.size > 0:
-            vmin = float(valid.min())
-            vmax = float(valid.max())
-        else:
-            vmin, vmax = 0.0, 0.0
-
-        return {
-            "type": "raster",
-            "png_b64": png_b64,
-            "bbox": [float(b) for b in bounds],
-            "width": int(rgb.shape[1]),
-            "height": int(rgb.shape[0]),
-            "value_range": [vmin, vmax],
-            "colormap": cmap_name,
-            "value_kind": value_kind,
-            "opacity": 0.7,
-        }
-
     def _to_raster_layer(
         self,
         arr: np.ndarray,
@@ -380,13 +309,6 @@ class RasterAnalyzer:
             "value_kind": value_kind,
             "opacity": 0.7,
         }
-
-    @staticmethod
-    def _resolve_colormap(cmap_name: Optional[str]) -> str:
-        """校验 colormap 名：未知降级到 grayscale。"""
-        if cmap_name and cmap_name in RasterAnalyzer.SUPPORTED_COLORMAPS:
-            return cmap_name
-        return "grayscale"
 
     # ------------------------------------------------------------------
     # 重投影

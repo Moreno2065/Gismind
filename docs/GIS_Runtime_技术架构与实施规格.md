@@ -1,8 +1,8 @@
 # Gismind GIS Runtime 技术架构与实施规格
 
 > 文档状态：Runtime 主链已实施；未标注“已实施”的条目仍是后续规格
-> 文档版本：1.15
-> 日期：2026-09-05
+> 文档版本：1.16
+> 日期：2026-10-16
 > 适用范围：Gismind 单机版下一代运行内核
 > 兼容策略：破坏性升级，不兼容旧会话、旧 checkpoint、旧 TaskPlan 与旧 SSE 传输契约
 
@@ -83,6 +83,20 @@ Gismind 已完成从 Agent 应用到 GIS Runtime 的主链切换：Run、Input R
 SQLite migration v11 已移除 `artifacts.content_hash` 的唯一约束，保留所有子表对 `artifact_id` 的外键，并增加普通 content-hash 索引。旧行的历史 ID 不会被重写；新上传生成随机 `art_*` ID，Task 输出生成由 producer/port/语义决定的稳定 `art_*` ID，因而 retry 可以幂等。CAS 仍按 SHA-256 去重。GC 以 Blob 可达性补充 Artifact 可达性：只要任一共享同 hash 的 Artifact 被引用或该 hash 有有效 lease，整组都不会进入候选。除已收紧的高风险 Vector 和 Raster 多输入合同外，剩余操作仍需逐项完成端口、参数与语义验证覆盖，不能仅因有 handler 就标记为语义闭合。
 
 ---
+
+### 1.4 2026-10-16 Runtime 与真实地图验收增量（当前实现）
+
+当前 Runtime 由 `planning_control.py` 对一次规划 generation 的期限、HTTP 调用预算、lease 失效和 Worker 退出统一控制；`goal_requirements.py` 将用户明确表达的字段保留、重命名、否定筛选、顺序缓冲和多指令要求绑定到 Compiler 检查，不能用模型自行改写的 DAG 反证用户要求。`aggregate_postconditions.py` 对分组、聚合和空间关系输出做独立完整性检查。API、持久化进度投影和前端任务详情补齐运行进度、终态诊断及地图加载失败后的恢复，仍以 SQLite/Event 为运行事实来源。
+
+2026-10-14 的独立中文浏览器 corpus `zh-browser-2000-20261014-batch09` 已完成真实 **2000 个唯一中文请求、2000 个 Provider 验证结果、0 个失败**，最终交付包括 1800 个 GPKG、1800 个 MapLayer 和 200 个 Raster。这里的 2000 条 browser corpus 与阶段 8 的静态 200 条 action corpus 是两套不同验收，不能互相冒充新实测。
+
+2026-10-16 已完成全部 **1800 个最终 MapLayer 的真实 Chrome 验收及独立复核**：独立 GDAL/OSR 读取关联 GPKG，对 5800 个要素（2400 个 Polygon、3400 个 Point，197800 个物理坐标位置）转换并核对；真实 SDK `getPath/getPosition` 的顶点、环和部件逐项匹配；逐 overlay 与最终组合执行隐藏／显示／隐藏／显示，复核独立投影 mask、core、轮廓、锁定视图背景稳定及最终恢复。独立复核覆盖 35804 次 SDK 快照、3764612 次 SDK 坐标位置和 30404 张因果阶段 PNG；最大坐标分量误差约 `5.0e-7°`，低于 `2e-6°` 容差。paint 与 cleanup 仍分别使用原 30 秒期限。
+
+最终状态为 **`COMPLETE_WITH_RETEST`，不是首轮零失败**。完整 full07 首轮为 1799/1800；上一案例发出的 SDK 请求延迟返回时被观测器错误归给当前案例。观测器现按原始 Playwright Request 对象保存归属，不按响应到达时的 UI 状态猜测。修复后在新目录重跑受影响的整个隔离浏览器上下文，25/25 通过；最终选择原轮次未受影响的 1775 个案例和新轮次的 25 个案例，统一复核全部 1800 个不同案例的物理数据、SDK、画面与关闭后的 Native 网络来源。原轮次的失败结果未改写，没有拼入旧 pilot 或旧部分运行。保留的一次画面未就绪测量及随后成功测量也未删去。
+
+本次最终回归为后端 **2999 passed、6 skipped**，前端 **174 passed**，验收工具 **924 passed**；前端 typecheck、生产构建、包体检查及 Runtime post-delete gate 均通过。地图验收不新增 Provider 调用；总预算占用为 `15.818015508 / 20 USD`，其中已结算 `15.382683108 USD`，预留 `0.4353324 USD`。历史案例读取使用隔离只读 clone 及明确标识的历史会话投影；这不表示 stock `/api/sessions` 的 recent-200 列表限制已被取消。
+
+可维护的验收源码位于 `tools/map_acceptance/`，独立物理、PNG 与 Native 复核入口位于其 `review/` 子目录。当前验收摘要为 [`map_acceptance_20261016.json`](./map_acceptance_20261016.json)；大型原始运行证据保存在忽略的 `backend/.gismind/`，不提交进源码仓库。旧重复运行、废弃工具和可重建测试缓存已清理，当前原始数据、full07 与修复后重测结果保留。
 
 ## 2. 现状审计
 

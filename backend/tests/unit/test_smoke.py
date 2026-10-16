@@ -26,7 +26,7 @@ def test_unconfigured_planner_fails_before_opening_provider_transport(monkeypatc
     def forbidden_transport(*args, **kwargs):
         raise AssertionError("Missing credentials must not open a provider connection")
 
-    monkeypatch.setattr("app.runtime.llm_planner.httpx.Client", forbidden_transport)
+    monkeypatch.setattr("app.runtime.llm_planner.httpx.AsyncClient", forbidden_transport)
     planner = OpenAICompatiblePlanner(api_key=api_key, base_url="https://provider.invalid/v1",
         model="deepseek-flash", timeout_seconds=1, max_tokens=10, max_retries=0)
     with pytest.raises(PlannerError) as error:

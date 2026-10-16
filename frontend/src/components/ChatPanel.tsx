@@ -134,7 +134,7 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     const statusMap: Record<string, ChatMessage['status']> = { queued: 'thinking', planning: 'thinking', ready: 'thinking', awaiting_input: 'fetching', running: 'fetching', cancelling: 'fetching', completed: 'done', failed: 'error', cancelled: 'error' };
     updateAssistant(messageId, (message) => ({ ...message, status: statusMap[projection.status] ?? 'thinking',
       statusMessage: projection.status === 'awaiting_input' ? String(projection.awaiting_input?.message ?? '需要补充输入') : 'Run ' + projection.status,
-      error: projection.status === 'failed' ? { code: 'RUN_FAILED', message: String(projection.diagnostic?.message ?? '任务执行失败') } : undefined,
+      error: projection.status === 'failed' ? { code: String(projection.diagnostic?.code ?? 'RUN_FAILED'), message: String(projection.diagnostic?.message ?? '任务执行失败') } : undefined,
       executionTrace: projection.events.length ? projection.events : message.executionTrace,
     }));
     const signal = lifecycleRef.current?.signal;
@@ -274,6 +274,10 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
 
   const hasMessages = messages.length > 0;
   const visibleArtifacts = mergeArtifacts(artifacts, pendingUploads.flatMap((upload) => upload.artifact ? [upload.artifact] : []));
+  const finalProjection = lastProjection?.status === 'completed' ? lastProjection : null;
+  const finalArtifacts = finalProjection?.output_artifacts.filter(artifact => finalProjection.final_artifact_ids?.includes(artifact.artifact_id)) ?? [];
+  const preferredArtifact = finalArtifacts.find(artifact => artifact.type === 'MapLayer')
+    ?? finalArtifacts.find(artifact => artifact.type === 'File') ?? finalArtifacts[0];
   return <div className="runtime-workbench">
     <div className="workbench-toolbar">
       <div><span className="workbench-kicker">SPATIAL WORKSPACE</span><h1 className="mt-1 text-sm font-medium text-ink-100">空间分析工作台</h1></div>
@@ -285,13 +289,16 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     {recoveryError && <div role="alert" className="mx-4 mt-2 rounded border border-amber/40 bg-amber/10 p-2 text-xs text-amber">{recoveryError}<button type="button" onClick={() => setRecoveryRevision(value => value + 1)} className="ml-3 underline">重试恢复</button></div>}
     <div className="workbench-body" data-mobile-pane={mobilePane}>
     <aside className="workbench-artifacts" aria-label="空间成果工作区">
-      <ArtifactWorkspace key={sessionId} artifacts={visibleArtifacts} disabled={isRunning || !!awaitingInput} onUse={(artifact) => {
+      <ArtifactWorkspace key={sessionId} artifacts={visibleArtifacts} tasks={(projection ?? lastProjection)?.tasks} preferredArtifactId={preferredArtifact?.artifact_id} resultRunId={finalProjection?.run_id} disabled={isRunning || !!awaitingInput} onUse={(artifact) => {
         setSelectedInputs((current) => mergeArtifacts(current, [artifact])); setMobilePane('chat');
       }} />
     </aside>
     <section className="workbench-chat" aria-label="Runtime 对话">
     <div ref={scroll.containerRef} className={hasMessages ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain' : 'flex min-h-0 flex-1 items-center justify-center overflow-y-auto'}>
       {hasMessages ? <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">{messages.map((message) => <MessageBubble key={message.id} message={message} onBeforeMapLoad={scroll.beforeMutation} onAfterMapLoad={scroll.afterMutation} />)}</div> : <WelcomeHero onExample={setInput} onUpload={() => fileInputRef.current?.click()} />}
+    </div>
+    <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
+      <RunStatusBar projection={projection ?? lastProjection} connectionState={activeRun ? runtime.connectionState : lastProjection ? 'closed' : 'idle'} terminalSettled={!activeRun && !!lastProjection && terminalRunStatuses.has(lastProjection.status)} />
     </div>
     <div className="workbench-composer"><div className="mx-auto w-full max-w-3xl px-4 py-3">
       {(commandError || runtime.error) && <div role="alert" className="mb-2 text-sm text-signal-error">{commandError ?? runtime.error?.message}{activeRun && <button type="button" onClick={() => { setCommandError(null); void runtime.connect(); }} className="ml-2 underline">重新连接</button>}</div>}
@@ -311,7 +318,6 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     </div></div>
     </section>
     </div>
-    <RunStatusBar projection={projection ?? lastProjection} connectionState={activeRun ? runtime.connectionState : lastProjection ? 'closed' : 'idle'} terminalSettled={!activeRun && !!lastProjection && terminalRunStatuses.has(lastProjection.status)} />
   </div>;
 }
 
