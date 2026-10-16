@@ -98,7 +98,7 @@ jobs:
           fi
       - name: Preserve failures and resumable evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: real-llm-evidence-${{ github.run_id }}
           path: |
