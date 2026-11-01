@@ -301,7 +301,13 @@ def _v11_separate_artifact_identity_from_blob_hash(conn) -> None:
     conn.execute("ALTER TABLE artifacts_runtime_v11 RENAME TO artifacts")
 
 
-MIGRATIONS = {1: SCHEMA, 2: _v2_plan_cache_columns, 3: _v3_artifact_metadata_and_lease_ddl, 4: _v4_confirmation_action_hash, 5: _v5_task_claim_leases, 6: _v6_retry_schedule, 7: _v7_worker_fencing_and_executor_identity, 8: _v8_executor_identity_not_null, 9: _v9_planner_attempts, 10: _v10_allow_upload_identity_output_dedup, 11: _v11_separate_artifact_identity_from_blob_hash}
+def _v12_session_titles(conn) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if columns and "title" not in columns:
+        conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '新会话'")
+
+
+MIGRATIONS = {1: SCHEMA, 2: _v2_plan_cache_columns, 3: _v3_artifact_metadata_and_lease_ddl, 4: _v4_confirmation_action_hash, 5: _v5_task_claim_leases, 6: _v6_retry_schedule, 7: _v7_worker_fencing_and_executor_identity, 8: _v8_executor_identity_not_null, 9: _v9_planner_attempts, 10: _v10_allow_upload_identity_output_dedup, 11: _v11_separate_artifact_identity_from_blob_hash, 12: _v12_session_titles}
 
 
 def migrate(db) -> None:

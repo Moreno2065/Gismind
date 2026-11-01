@@ -5,9 +5,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SessionMeta } from '@/types/session';
 import {
+  clearActiveSessionId,
   createSession as apiCreateSession,
   deleteSession as apiDeleteSession,
   getActiveSessionId,
+  getSessionMeta as apiGetSessionMeta,
+  RuntimeApiError,
   listSessions as apiListSessions,
   renameSession as apiRenameSession,
   setActiveSessionId,
@@ -46,203 +49,179 @@ export function useSessions(): UseSessionsApi {
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // 一个挂载期间统一的 AbortController；unmount 时取消。
   const controllerRef = useRef<AbortController | null>(null);
-
-  // 持有最新 state 的 ref —— 因为 refresh() 内部需要参考当前 sessions / activeId
-  // 但 useCallback 会把初始值锁死。
+  const refreshVersion = useRef(0);
+  const selectionVersion = useRef(0);
+  // Update these refs with each publication, not one render later: mutations
+  // can finish before React flushes the preceding selection update.
   const stateRef = useRef({ sessions, activeId });
-  stateRef.current = { sessions, activeId };
+  const alive = useCallback((ctrl: AbortController) =>
+    controllerRef.current === ctrl && !ctrl.signal.aborted, []);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const publishSessions = useCallback((items: SessionMeta[]) => {
+    const sorted = sortByUpdatedAt(items);
+    stateRef.current = { ...stateRef.current, sessions: sorted };
+    setSessions(sorted);
+  }, []);
+  const selectSession = useCallback((id: string | null) => {
+    stateRef.current = { ...stateRef.current, activeId: id };
+    setActiveIdState(id);
+    if (id) setActiveSessionId(id);
+    else clearActiveSessionId();
+  }, []);
+  const addCreated = useCallback((created: Awaited<ReturnType<typeof apiCreateSession>>) => {
+    publishSessions([
+      ...stateRef.current.sessions.filter(item => item.id !== created.id),
+      { ...created, message_count: 0, tool_count: 0, has_map: false },
+    ]);
+  }, [publishSessions]);
+
+  const load = useCallback(async (createIfEmpty = false): Promise<void> => {
     const ctrl = controllerRef.current;
     if (!ctrl) return;
+    const version = ++refreshVersion.current;
+    const current = () => alive(ctrl) && version === refreshVersion.current;
     setLoading(true);
     try {
-      const items = await apiListSessions(ctrl.signal);
-      const sorted = sortByUpdatedAt(items);
-      setSessions(sorted);
-      setError(null);
-
-      // 若当前 activeId 已不在列表中，回退到列表头部或清空
-      const cur = stateRef.current.activeId;
-      if (cur && !sorted.some((s) => s.id === cur)) {
-        const fallback = sorted[0]?.id ?? null;
-        setActiveIdState(fallback);
-        if (fallback) {
-          setActiveSessionId(fallback);
-        } else {
-          try {
-            localStorage.removeItem('gismind.active_session');
-          } catch {
-            /* noop */
-          }
+      let items = await apiListSessions(ctrl.signal);
+      if (!current()) return;
+      const selected = stateRef.current.activeId;
+      let missing = false;
+      if (selected && !items.some(item => item.id === selected)) {
+        try {
+          const retained = await apiGetSessionMeta(selected, ctrl.signal);
+          items = [...items, retained];
+        } catch (lookupError) {
+          // A bounded recent listing is not deletion evidence. Only an
+          // authoritative404 permits fallback; network failures retain focus.
+          if (lookupError instanceof RuntimeApiError && lookupError.status === 404
+              && lookupError.code === 'SESSION_NOT_FOUND') missing = true;
+          else throw lookupError;
         }
-      } else if (!cur && sorted.length > 0) {
-        const fallback = sorted[0].id;
-        setActiveIdState(fallback);
-        setActiveSessionId(fallback);
       }
-    } catch (e) {
-      // AbortError 静默忽略
-      if (e instanceof Error && e.name === 'AbortError') return;
-      setError(e instanceof Error ? e.message : String(e));
-      // 失败时 sessions 保留旧值
+      if (!current()) return;
+      const latest = stateRef.current.activeId;
+      if (latest !== selected) {
+        const retained = stateRef.current.sessions.find(item => item.id === latest);
+        if (retained && !items.some(item => item.id === latest)) items = [...items, retained];
+      } else if (missing || !latest) {
+        selectSession(sortByUpdatedAt(items)[0]?.id ?? null);
+      }
+      publishSessions(items);
+      if (createIfEmpty && !stateRef.current.activeId && items.length === 0) {
+        const intent = selectionVersion.current;
+        const created = await apiCreateSession(ctrl.signal);
+        if (!current()) return;
+        addCreated(created);
+        if (intent === selectionVersion.current && !stateRef.current.activeId) selectSession(created.id);
+      }
+      setError(null);
+    } catch (failure) {
+      if (current() && !(failure instanceof Error && failure.name === 'AbortError')) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+      }
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, []);
+  }, [addCreated, alive, publishSessions, selectSession]);
+
+  const refresh = useCallback(() => load(), [load]);
 
   const create = useCallback(async (): Promise<string> => {
     const ctrl = controllerRef.current;
     if (!ctrl) throw new Error('useSessions: unmounted');
+    const intent = ++selectionVersion.current;
+    ++refreshVersion.current;
+    setLoading(false);
     try {
       const created = await apiCreateSession(ctrl.signal);
-      setActiveSessionId(created.id);
-      setActiveIdState(created.id);
+      if (!alive(ctrl)) throw new DOMException('Session view unmounted', 'AbortError');
+      addCreated(created);
+      if (intent === selectionVersion.current) selectSession(created.id);
       setError(null);
-      // 拉最新列表（含新 session）
-      await refresh();
+      await load();
       return created.id;
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
+    } catch (failure) {
+      if (!alive(ctrl) || failure instanceof Error && failure.name === 'AbortError') {
         throw new Error('useSessions: aborted');
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      throw e;
+      setError(failure instanceof Error ? failure.message : String(failure));
+      throw failure;
     }
-  }, [refresh]);
+  }, [addCreated, alive, load, selectSession]);
 
   const rename = useCallback(async (id: string, title: string): Promise<void> => {
     const ctrl = controllerRef.current;
     if (!ctrl) return;
     try {
       await apiRenameSession(id, title, ctrl.signal);
-      // 乐观更新：本地先把 title 改了
-      setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, title } : s)),
-      );
+      if (!alive(ctrl)) return;
+      publishSessions(stateRef.current.sessions.map(item => item.id === id ? { ...item, title } : item));
       setError(null);
-      // 再拉一次真实状态（updated_at 也会变）
-      void refresh();
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') return;
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      // 404 等错误透传上层处理
-      throw e;
+      void load();
+    } catch (failure) {
+      if (!alive(ctrl) || failure instanceof Error && failure.name === 'AbortError') return;
+      setError(failure instanceof Error ? failure.message : String(failure));
+      throw failure;
     }
-  }, [refresh]);
+  }, [alive, load, publishSessions]);
 
   const remove = useCallback(async (id: string): Promise<void> => {
     const ctrl = controllerRef.current;
     if (!ctrl) return;
-    // 记录删除前的 activeId 用于决定是否要迁移
-    const wasActive = stateRef.current.activeId === id;
+    // Reserve selection intent when the user acts. A completed DELETE must
+    // not invalidate a newer create that is still awaiting its response.
+    const intent = stateRef.current.activeId === id
+      ? ++selectionVersion.current : selectionVersion.current;
     try {
       await apiDeleteSession(id, ctrl.signal);
-    } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') return;
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      throw e;
+      if (!alive(ctrl)) return;
+    } catch (failure) {
+      if (!alive(ctrl) || failure instanceof Error && failure.name === 'AbortError') return;
+      setError(failure instanceof Error ? failure.message : String(failure));
+      throw failure;
     }
-
-    // 内存数组中过滤掉该 id，并按 updated_at 重排
-    const remaining = sortByUpdatedAt(
-      stateRef.current.sessions.filter((s) => s.id !== id),
-    );
-    setSessions(remaining);
-
-    // 清理该 session 的本地消息缓存
+    ++refreshVersion.current;
+    setLoading(false);
+    const remaining = sortByUpdatedAt(stateRef.current.sessions.filter(item => item.id !== id));
+    publishSessions(remaining);
     clearMessageCache(id);
-
-    if (wasActive) {
-      if (remaining.length > 0) {
-        const nextActive = remaining[0].id;
-        setActiveIdState(nextActive);
-        setActiveSessionId(nextActive);
-      } else {
-        // 列表空 —— 自动建一个
-        try {
-          const created = await apiCreateSession(ctrl.signal);
-          setActiveIdState(created.id);
-          setActiveSessionId(created.id);
-          // 拉一次以同步 sessions
-          void refresh();
-        } catch (e2) {
-          if (e2 instanceof Error && e2.name === 'AbortError') return;
-          const msg = e2 instanceof Error ? e2.message : String(e2);
-          setError(msg);
-        }
-      }
+    setError(null);
+    // Decide at completion, not from the selection before awaiting DELETE.
+    if (stateRef.current.activeId !== id) return;
+    selectSession(remaining[0]?.id ?? null);
+    if (remaining.length || intent !== selectionVersion.current) return;
+    try {
+      const created = await apiCreateSession(ctrl.signal);
+      if (!alive(ctrl)) return;
+      addCreated(created);
+      if (intent === selectionVersion.current && !stateRef.current.activeId) selectSession(created.id);
+    } catch (failure) {
+      if (!alive(ctrl) || failure instanceof Error && failure.name === 'AbortError') return;
+      setError(failure instanceof Error ? failure.message : String(failure));
     }
-  }, [refresh]);
+  }, [addCreated, alive, publishSessions, selectSession]);
 
   const activate = useCallback((id: string): void => {
-    setActiveSessionId(id);
-    setActiveIdState(id);
-  }, []);
+    const ctrl = controllerRef.current;
+    if (!ctrl || !alive(ctrl)) return;
+    ++selectionVersion.current;
+    selectSession(id);
+  }, [alive, selectSession]);
 
-  // 初始化：建 controller + 首屏 load
   useEffect(() => {
     const ctrl = new AbortController();
     controllerRef.current = ctrl;
-
-    (async () => {
-      setLoading(true);
-      try {
-        const items = await apiListSessions(ctrl.signal);
-        const sorted = sortByUpdatedAt(items);
-        setSessions(sorted);
-
-        const stored = getActiveSessionId();
-        if (stored && sorted.some((s) => s.id === stored)) {
-          setActiveIdState(stored);
-        } else if (sorted.length > 0) {
-          // 没有 activeId 但有列表 —— 默认指向列表头
-          const fallback = sorted[0].id;
-          setActiveIdState(fallback);
-          setActiveSessionId(fallback);
-        } else {
-          // 完全没有 —— 自动建一个
-          try {
-            const created = await apiCreateSession(ctrl.signal);
-            setActiveIdState(created.id);
-            setActiveSessionId(created.id);
-            const items2 = await apiListSessions(ctrl.signal);
-            setSessions(sortByUpdatedAt(items2));
-          } catch (e) {
-            if (e instanceof Error && e.name === 'AbortError') return;
-            setError(e instanceof Error ? e.message : String(e));
-          }
-        }
-        setError(null);
-      } catch (e) {
-        if (e instanceof Error && e.name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-
+    selectSession(getActiveSessionId());
+    void load(true);
     return () => {
       ctrl.abort();
-      controllerRef.current = null;
+      if (controllerRef.current === ctrl) {
+        controllerRef.current = null;
+        ++refreshVersion.current;
+      }
     };
-  }, []);
+  }, [load, selectSession]);
 
-  return {
-    sessions,
-    activeId,
-    loading,
-    error,
-    refresh,
-    create,
-    rename,
-    remove,
-    activate,
-  };
+  return { sessions, activeId, loading, error, refresh, create, rename, remove, activate };
 }

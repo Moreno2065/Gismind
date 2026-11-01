@@ -342,6 +342,21 @@ class RuntimeStore:
             c.execute("DELETE FROM message_artifacts WHERE message_id IN (SELECT message_id FROM messages WHERE session_id=?)", (session_id,))
         self._write(op)
 
+    def rename_session(self, session_id: str, title: str) -> dict | None:
+        if not isinstance(title, str) or not title.strip() or len(title.strip()) > 120:
+            raise ValueError("INVALID_SESSION_TITLE")
+        now = utc_now()
+        def op(c):
+            changed = c.execute(
+                "UPDATE sessions SET title=?,session_version=session_version+1,updated_at=? "
+                "WHERE session_id=? AND deleted_at IS NULL",
+                (title.strip(), now, session_id),
+            ).rowcount
+            if not changed:
+                return None
+            return _row(c.execute("SELECT * FROM sessions WHERE session_id=?", (session_id,)).fetchone())
+        return self._write(op)
+
     def update_session(self, session_id: str, *, session_version: int | None = None) -> dict:
         now = utc_now()
         def op(c):

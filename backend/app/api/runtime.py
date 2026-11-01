@@ -42,29 +42,30 @@ def create_runtime_session(request: Request):
     runtime, _artifacts, _supervisor = _resources(request)
     session_id = f"session_{uuid.uuid4().hex}"
     session = runtime.create_session(session_id)
-    return {"id": session_id, "title": "新会话", "created_at": session["created_at"], "updated_at": session["updated_at"]}
+    return {"id": session_id, "title": session.get("title") or "新会话", "created_at": session["created_at"], "updated_at": session["updated_at"]}
 
 
 @router.get("/sessions")
 def list_runtime_sessions(request: Request):
     runtime, _artifacts, _supervisor = _resources(request)
     items = runtime._read(lambda c: [dict(row) for row in c.execute("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT 200").fetchall()])
-    return {"items": [{"id": row["session_id"], "title": "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]} for row in items]}
+    return {"items": [{"id": row["session_id"], "title": row.get("title") or "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]} for row in items]}
 
 
 @router.get("/sessions/{session_id}")
 def get_runtime_session(request: Request, session_id: str):
     runtime, _artifacts, _supervisor = _resources(request)
     row = runtime.get_session(session_id)
-    if not row or row.get("deleted_at"):
+    if not row or row.get("deleted_at") is not None:
         return _error(request, 404, "SESSION_NOT_FOUND", "session does not exist")
-    return {"id": session_id, "title": "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]}
+    return {"id": session_id, "title": row.get("title") or "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
 
 @router.get("/sessions/{session_id}/messages")
 def get_runtime_messages(request: Request, session_id: str):
     runtime, _artifacts, _supervisor = _resources(request)
-    if not runtime.get_session(session_id):
+    session = runtime.get_session(session_id)
+    if not session or session.get("deleted_at") is not None:
         return _error(request, 404, "SESSION_NOT_FOUND", "session does not exist")
     rows = runtime._read(lambda c: [dict(row) for row in c.execute("SELECT * FROM messages WHERE session_id=? ORDER BY message_index", (session_id,)).fetchall()])
     return {"messages": [{"id": row["message_id"], "role": row["role"], "content": row["content"], "created_at": row["created_at"]} for row in rows]}
@@ -90,9 +91,12 @@ def list_session_runs(request: Request, session_id: str):
 @router.patch("/sessions/{session_id}", status_code=204)
 def rename_runtime_session(request: Request, session_id: str, body: dict[str, Any]):
     runtime, _artifacts, _supervisor = _resources(request)
-    if not runtime.get_session(session_id):
+    try:
+        session = runtime.rename_session(session_id, body.get("title"))
+    except ValueError:
+        return _error(request, 422, "INVALID_SESSION_TITLE", "title must contain 1 to 120 nonblank characters")
+    if session is None:
         return _error(request, 404, "SESSION_NOT_FOUND", "session does not exist")
-    runtime.update_session(session_id)
     return Response(status_code=204)
 
 
@@ -412,6 +416,15 @@ async def run_events(request: Request, run_id: str, after_event_id: int | None =
     return StreamingResponse(_event_stream(runtime, run_id, cursor), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Request-ID": _request_id(request)})
 
 
+def _bounded_range_position(value: str, maximum: int) -> int:
+    """Clamp a validated decimal numeral before converting it to an integer."""
+    digits = value.lstrip("0") or "0"
+    bound = str(maximum)
+    if len(digits) > len(bound) or len(digits) == len(bound) and digits > bound:
+        return maximum
+    return int(digits)
+
+
 def _iter_file_range(path: Path, start: int, end: int, *, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
     """Stream a bounded Artifact range without materializing the whole file."""
     remaining = end - start + 1
@@ -651,7 +664,9 @@ def get_artifact(request: Request, artifact_id: str):
 
 
 @router.get("/artifacts/{artifact_id}/content")
-def get_artifact_content(request: Request, artifact_id: str, range_header: str | None = Header(default=None, alias="Range")):
+def get_artifact_content(request: Request, artifact_id: str,
+                         range_header: str | None = Header(default=None, alias="Range"),
+                         if_range_header: str | None = Header(default=None, alias="If-Range")):
     runtime, artifacts, _supervisor = _resources(request)
     artifact = _artifact_visible(runtime, artifact_id)
     if artifact is None:
@@ -671,25 +686,40 @@ def get_artifact_content(request: Request, artifact_id: str, range_header: str |
         safe_filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(str(raw_filename or "artifact.bin")).name)[:120].strip("._") or "artifact.bin"
         headers["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
     media_type = "application/octet-stream" if is_download else artifact.get("media_type") or "application/octet-stream"
+    if range_header and (
+        if_range_header is not None and if_range_header != headers["ETag"]
+        or "=" in range_header and range_header.partition("=")[0].lower() != "bytes"
+    ):
+        # Ignore unknown units and failed strong validators. A FileResponse
+        # would parse the original request's Range again, so stream the entire
+        # immutable representation explicitly on this fallback path.
+        return StreamingResponse(_iter_file_range(path, 0, size - 1), media_type=media_type,
+                                 headers={**headers, "Content-Length": str(size)})
     if range_header:
         try:
-            value = range_header.removeprefix("bytes=").split("-", 1)
-            if len(value) != 2:
+            match = re.fullmatch(r"bytes=([0-9]*)-([0-9]*)", range_header, flags=re.IGNORECASE)
+            if match is None or size == 0:
                 raise ValueError
-            if value[0] == "":
-                suffix = int(value[1])
+            first, last = match.groups()
+            if not first and not last:
+                raise ValueError
+            if not first:
+                suffix = _bounded_range_position(last, size)
                 if suffix <= 0:
                     raise ValueError
-                start, end = max(size - suffix, 0), size - 1
+                start, end = size - suffix, size - 1
             else:
-                start = int(value[0])
-                end = int(value[1]) if value[1] else size - 1
-            if start < 0 or end < start or end >= size:
+                start = _bounded_range_position(first, size)
+                end = _bounded_range_position(last, size - 1) if last else size - 1
+            if start >= size or end < start:
                 raise ValueError
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
             return StreamingResponse(_iter_file_range(path, start, end), status_code=206, media_type=media_type, headers={**headers, "Content-Length": str(end - start + 1)})
         except (TypeError, ValueError):
-            return _error(request, 416, "ARTIFACT_RANGE_INVALID", "invalid byte range")
+            error = _error(request, 416, "ARTIFACT_RANGE_INVALID", "invalid byte range")
+            error.headers["Content-Range"] = f"bytes */{size}"
+            error.headers["Accept-Ranges"] = "bytes"
+            return error
     return FileResponse(Path(path), media_type=media_type, filename=None, headers=headers)
 
 

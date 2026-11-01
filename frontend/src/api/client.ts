@@ -213,26 +213,39 @@ async function readError(res: Response, fallback: string): Promise<never> {
   throw new Error(`${fallback}: ${msg}`);
 }
 
-/** 列出全部 session。 */
+/** Normalize Runtime RFC3339 timestamps at the API boundary; views use epoch ms. */
+function normalizeSessionTimes<T extends { created_at: unknown; updated_at: unknown }>(session: T) {
+  const timestamp = (value: unknown): number => {
+    const result = typeof value === 'number' ? value
+      : typeof value === 'string' ? Date.parse(value) : NaN;
+    if (!Number.isFinite(result) || !Number.isFinite(new Date(result).getTime())) {
+      throw new Error('Invalid session timestamp');
+    }
+    return result;
+  };
+  return { ...session, created_at: timestamp(session.created_at), updated_at: timestamp(session.updated_at) };
+}
+
+/** 列出最近的 session；活动历史会话通过 getSessionMeta 单独恢复。 */
 export async function listSessions(signal?: AbortSignal): Promise<SessionMeta[]> {
   const res = await fetch(`${BASE}/sessions`, { headers: authHeaders(), signal });
   if (!res.ok) await readError(res, 'list sessions failed');
   const payload = (await res.json()) as SessionListResponse;
-  return payload.items;
+  return payload.items.map(normalizeSessionTimes);
 }
 
 /** 新建一个空 session。 */
 export async function createSession(signal?: AbortSignal): Promise<CreateSessionResponse> {
   const res = await fetch(`${BASE}/sessions`, { method: 'POST', headers: authHeaders(), signal });
   if (!res.ok) await readError(res, 'create session failed');
-  return (await res.json()) as CreateSessionResponse;
+  return normalizeSessionTimes((await res.json()) as CreateSessionResponse);
 }
 
 /** 获取单个 session 元信息。 */
 export async function getSessionMeta(id: string, signal?: AbortSignal): Promise<SessionMeta> {
   const res = await fetch(`${BASE}/sessions/${encodeURIComponent(id)}`, { headers: authHeaders(), signal });
   if (!res.ok) await readError(res, 'get session failed');
-  return (await res.json()) as SessionMeta;
+  return normalizeSessionTimes((await res.json()) as SessionMeta);
 }
 
 /** 读取 session 全部消息。 */

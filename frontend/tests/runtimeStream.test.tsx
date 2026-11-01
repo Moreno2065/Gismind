@@ -247,3 +247,28 @@ it('reconnects between terminal status projection and the committed terminal eve
   expect(cursors).toEqual(['105', '106']);
   expect(result.current.projection?.events.map(item => item.type)).toEqual(['run.status_changed', 'run.completed']);
 });
+
+it.each(['gap', 'invalid_cursor'] as const)('keeps recovering after a transient snapshot failure during %s rebase', async (kind) => {
+  let snapshots = 0;
+  const cursors: string[] = [];
+  const methods: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    methods.push(init?.method ?? 'GET');
+    if (!url.endsWith('/events')) {
+      snapshots += 1;
+      if (snapshots === 2) return Response.json({ error: { code: 'TEMPORARY_FAILURE', message: 'retry snapshot' } }, { status: 503 });
+      return Response.json(snapshot(snapshots === 1 ? 5 : 7));
+    }
+    cursors.push(new Headers(init?.headers).get('Last-Event-ID') ?? '');
+    if (cursors.length === 1 && kind === 'invalid_cursor') {
+      return Response.json({ error: { code: 'INVALID_EVENT_CURSOR', message: 'rebase required' } }, { status: 409 });
+    }
+    return response(encoder.encode(frame(event(cursors.length === 1 ? 7 : 8, 'run.completed'))));
+  }));
+  const { result } = renderHook(() => useRuntimeRun('stream-run'));
+  await waitFor(() => expect(result.current.terminalSettled).toBe(true), { timeout: 2500 });
+  expect(result.current.projection?.last_seq).toBe(8);
+  expect(result.current.error).toBeNull();
+  expect(cursors).toEqual(['105', '107']);
+  expect(methods.every(method => method === 'GET')).toBe(true);
+});

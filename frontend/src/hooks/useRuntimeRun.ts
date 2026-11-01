@@ -213,11 +213,25 @@ export function useRuntimeRun(runId: string | null) {
       if (abort.signal.aborted || abortRef.current !== abort) return;
       let current = projectionFromSnapshot(snapshot);
       let terminalObserved = ['completed', 'failed', 'cancelled'].includes(snapshot.status);
+      let needsRebase = false;
       setProjection(current);
       setTransport({ runId, terminalSettled: terminalObserved, connectionState: terminalObserved ? 'closed' : 'connecting' });
       if (terminalObserved) abort.abort();
       while (!abort.signal.aborted && !terminalObserved) {
         try {
+          if (needsRebase) {
+            // Retry a failed rebase snapshot before opening another stream.
+            // Never tail again using a cursor already known to be invalid.
+            const rebased = await getRuntimeRun(runId, abort.signal);
+            if (abort.signal.aborted || abortRef.current !== abort) break;
+            current = projectionFromSnapshot(rebased);
+            terminalObserved = ['completed', 'failed', 'cancelled'].includes(rebased.status);
+            needsRebase = false;
+            setError(null);
+            setProjection(current);
+            setTransport({ runId, terminalSettled: terminalObserved, connectionState: terminalObserved ? 'closed' : 'reconnecting' });
+            if (terminalObserved) { abort.abort(); break; }
+          }
           const response = await runtimeEventsStream(runId, current.last_event_id, abort.signal);
           if (abort.signal.aborted || abortRef.current !== abort) break;
           setTransport({ runId, terminalSettled: false, connectionState: 'live' });
@@ -264,17 +278,11 @@ export function useRuntimeRun(runId: string | null) {
           setError(streamError as Error);
           setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
           if (streamError instanceof EventSequenceGapError || (streamError instanceof RuntimeApiError && streamError.code === 'INVALID_EVENT_CURSOR')) {
-            // A deleted/late frame cannot be repaired by retrying with the old
-            // cursor. Rebase on the authoritative snapshot, then tail again.
-            const rebased = await getRuntimeRun(runId, abort.signal);
-            if (abort.signal.aborted || abortRef.current !== abort) break;
-            current = projectionFromSnapshot(rebased);
-            terminalObserved = ['completed', 'failed', 'cancelled'].includes(rebased.status);
-            setError(null);
-            setProjection(current);
-            setTransport({ runId, terminalSettled: terminalObserved, connectionState: terminalObserved ? 'closed' : 'reconnecting' });
-            if (terminalObserved) abort.abort();
-            continue;
+            needsRebase = true;
+          } else if (streamError instanceof RuntimeApiError && streamError.status >= 400
+              && streamError.status < 500 && ![408, 429].includes(streamError.status)) {
+            // Missing/forbidden runs require user action, not an endless poll.
+            throw streamError;
           }
         }
         if (!abort.signal.aborted && !terminalObserved) {
