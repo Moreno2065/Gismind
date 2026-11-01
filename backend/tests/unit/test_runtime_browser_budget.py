@@ -591,7 +591,7 @@ def test_cached_instance_reads_durable_twenty_policy_and_prices(tmp_path):
     authorize_upgrade(path, upgrade_facts(budget))
     # Seed a synthetic occupied-cost boundary, without any provider or LLM response.
     with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE reservations SET charged_nanos=9_999_999_999 WHERE status='retained'")
+        connection.execute("UPDATE reservations SET charged_nanos=? WHERE status='retained'", (9_999_999_999,))
     budget.input_rate = budget.output_rate = budget.cache_rate = 0
     entry = reserve(budget)
     expected = 2 * ((entry['input_tokens_bound'] * .3) + 4096 * 1.2) / 1_000_000

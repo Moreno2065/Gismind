@@ -24,6 +24,7 @@ def _runtime(tmp_path):
 def test_runtime_limits_reuse_sandbox_job_object_helper(monkeypatch):
     from app.runtime import process
 
+    monkeypatch.setattr(process, "os", SimpleNamespace(name="nt"))
     calls = []
     monkeypatch.setattr(process, "_sandbox_apply_job_object", lambda proc, memory_mb, cpu_weight=1: calls.append((proc, memory_mb, cpu_weight)) or "job")
     child = SimpleNamespace(pid=1)

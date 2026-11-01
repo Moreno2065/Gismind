@@ -29,13 +29,24 @@ def _pid_state(pid: int) -> bool | None:
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
         kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
         kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
         kernel.CloseHandle.restype = wintypes.BOOL
-        handle = kernel.OpenProcess(0x1000, False, pid)
-        if handle:
+        handle = kernel.OpenProcess(0x1000 | 0x100000, False, pid)
+        if not handle:
+            return False if ctypes.get_last_error() == 87 else None
+        try:
+            # An exited process object remains openable while another owner
+            # retains a handle. Only its signal distinguishes exit from life.
+            state = kernel.WaitForSingleObject(handle, 0)
+            if state == 0:  # WAIT_OBJECT_0: the process exited
+                return False
+            if state == 258:  # WAIT_TIMEOUT: the process is still running
+                return True
+            return None
+        finally:
             kernel.CloseHandle(handle)
-            return True
-        return False if ctypes.get_last_error() == 87 else None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
