@@ -353,12 +353,18 @@ class RuntimeDB:
             if str(self.path) != ":memory:":
                 self.path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(self.path), timeout=30, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            return conn
+        except BaseException:
+            # The public connection/transaction contexts cannot own a handle
+            # until setup returns, so setup must release it on failure.
+            conn.close()
+            raise
 
     def initialize(self) -> None:
         with self.transaction() as conn:

@@ -143,16 +143,15 @@ def _upgraded_policy(old_policy: dict[str, Any], historical_calls: int) -> dict[
 def _ledger_connection(path: Path, *, existing: bool = False):
     # mode=rw rejects a missing ledger; an authorization can never initialize one.
     target = path.as_uri() + '?mode=rw' if existing else str(path)
-    connection = sqlite3.connect(target, uri=existing, timeout=30, isolation_level=None)
-    connection.row_factory = sqlite3.Row
-    connection.execute('PRAGMA busy_timeout=30000')
-    connection.execute('PRAGMA synchronous=FULL')
-    try:
-        yield connection
-    finally:
-        if connection.in_transaction:
-            connection.rollback()
-        connection.close()
+    with closing(sqlite3.connect(target, uri=existing, timeout=30, isolation_level=None)) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA busy_timeout=30000')
+        connection.execute('PRAGMA synchronous=FULL')
+        try:
+            yield connection
+        finally:
+            if connection.in_transaction:
+                connection.rollback()
 
 
 def _stored_policy(connection: sqlite3.Connection) -> tuple[str, dict[str, Any]]:

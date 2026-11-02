@@ -148,19 +148,38 @@ class ArtifactStore:
                             raise ValueError("Vector Feature geometry is empty")
                 if not isinstance(crs, dict) or not crs:
                     raise ValueError("Vector requires declared CRS metadata")
+                from pyproj import CRS
+                from .contracts import validate_crs_value
+
+                validate_crs_value(crs)
+                kind = crs["kind"]
+                expected = CRS.from_epsg(crs["code"] if kind == "EPSG" else 4326)
                 if path.suffix.lower() in {".parquet", ".geoparquet"}:
-                    from pyproj import CRS
-                    kind = str(crs.get("kind", "")).upper()
-                    if kind == "EPSG" and isinstance(crs.get("code"), int):
-                        expected = CRS.from_epsg(crs["code"])
-                    elif kind == "WGS84":
-                        expected = CRS.from_epsg(4326)
-                    elif kind == "GCJ02":
+                    if kind == "GCJ02":
                         raise ValueError("Vector GeoParquet cannot declare GCJ02 as a physical CRS")
-                    else:
-                        raise ValueError("Vector declared CRS metadata is unsupported")
                     if frame.crs != expected:
                         raise ValueError("Vector CRS metadata does not match GeoParquet CRS")
+                else:
+                    # Runtime JSON may carry a physical CRS in either the
+                    # legacy GeoJSON member or the handler's explicit marker.
+                    # Both must agree with the immutable Artifact metadata.
+                    label = payload.get("_crs_label")
+                    if (label == "GCJ02" and kind != "GCJ02") or (kind == "GCJ02" and label not in (None, "GCJ02")):
+                        raise ValueError("Vector GCJ02 coordinates do not match declared CRS metadata")
+                    physical_crs = []
+                    if payload.get("_physical_crs") is not None:
+                        physical_crs.append(payload["_physical_crs"])
+                    embedded = payload.get("crs")
+                    if embedded is not None:
+                        properties = embedded.get("properties") if isinstance(embedded, dict) else None
+                        if not isinstance(properties, dict) or embedded.get("type") != "name" or not properties.get("name"):
+                            raise ValueError("Vector GeoJSON CRS metadata is unsupported")
+                        physical_crs.append(properties["name"])
+                    for physical in physical_crs:
+                        # GCJ02 uses an EPSG:4326 carrier plus its explicit
+                        # datum metadata; this comparison never converts it.
+                        if not CRS.from_user_input(physical).equals(expected, ignore_axis_order=True):
+                            raise ValueError("Vector CRS metadata does not match JSON physical CRS")
             except Exception as exc:
                 raise ValueError(f"Vector artifact is not readable spatial data: {exc}") from exc
         if artifact_type == "Raster":

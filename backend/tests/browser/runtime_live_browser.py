@@ -6,7 +6,7 @@ an explicit budget and token prices. No response stubs or manually driven worker
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager, ExitStack
+from contextlib import closing, contextmanager, ExitStack
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -142,7 +142,7 @@ def wait_server(url, process, *, worker=False):
 
 
 def sql_rows(database, query, parameters=()):
-    with sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(f'{database.as_uri()}?mode=ro', uri=True)) as connection, connection:
         connection.row_factory = sqlite3.Row
         return [dict(row) for row in connection.execute(query, parameters)]
 

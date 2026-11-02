@@ -15,6 +15,7 @@ import { ArtifactWorkspace } from './ArtifactWorkspace';
 import { RunStatusBar } from './RunStatusBar';
 
 interface ActiveRun { runId: string; messageId: string }
+interface PendingCreate { request: CreateRunRequest; messageId: string }
 interface ChatPanelProps { sessionId: string; onSessionUpdate?: () => void }
 const terminalRunStatuses = new Set(['completed', 'failed', 'cancelled']);
 
@@ -50,7 +51,7 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
   const isRunning = recovering || submitting || runBusy;
   const scroll = useScrollAnchor<HTMLDivElement>();
   const requestRef = useRef<AbortController | null>(null);
-  const pendingCreateRef = useRef<CreateRunRequest | null>(null);
+  const pendingCreateRef = useRef<PendingCreate | null>(null);
   const lifecycleRef = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
   const artifactIdsRef = useRef(new Set<string>());
@@ -218,23 +219,30 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     }
     busyRef.current = true; setSubmitting(true); setCommandError(null);
     const controller = new AbortController(); requestRef.current?.abort(); requestRef.current = controller;
-    const messageId = 'msg_' + crypto.randomUUID();
     const inputArtifactIds = [...new Set([...pendingUploads.filter((upload) => upload.status === 'ready' && upload.artifactId).map((upload) => upload.artifactId as string), ...selectedInputs.map((artifact) => artifact.artifact_id)])];
     const submittedFiles = new Set(pendingUploads.map((upload) => upload.file));
     const previous = pendingCreateRef.current;
     // A lost response does not mean creation failed. Retry the identical
     // payload with its original key; changed input is an intentional new Run.
-    const createRequest: CreateRunRequest = previous?.session_id === sessionId && previous.message === text
-      && JSON.stringify(previous.input_artifact_ids ?? []) === JSON.stringify(inputArtifactIds)
-      ? previous
+    const retrying = previous?.request.session_id === sessionId && previous.request.message === text
+      && JSON.stringify(previous.request.input_artifact_ids ?? []) === JSON.stringify(inputArtifactIds);
+    const createRequest: CreateRunRequest = retrying
+      ? previous.request
       : { session_id: sessionId, message: text, input_artifact_ids: inputArtifactIds, client_request_id: 'client_' + crypto.randomUUID() };
-    pendingCreateRef.current = createRequest;
-    setMessages((current) => [...current, createUserMessage(text), { id: messageId, role: 'assistant', blocks: [], status: 'thinking', statusMessage: '提交 Runtime…', executionTrace: [], created_at: Date.now() }]);
+    const messageId = retrying ? previous.messageId : 'msg_' + crypto.randomUUID();
+    const pendingCreate = { request: createRequest, messageId };
+    pendingCreateRef.current = pendingCreate;
+    if (retrying) {
+      // One idempotent creation owns one local turn, including transport retries.
+      updateAssistant(messageId, (message) => ({ ...message, status: 'thinking', statusMessage: '提交 Runtime…', error: undefined }));
+    } else {
+      setMessages((current) => [...current, createUserMessage(text), { id: messageId, role: 'assistant', blocks: [], status: 'thinking', statusMessage: '提交 Runtime…', executionTrace: [], created_at: Date.now() }]);
+    }
     scroll.forceBottom();
     try {
       const created = await createRuntimeRun(createRequest, controller.signal);
       if (!controller.signal.aborted) {
-        if (pendingCreateRef.current === createRequest) pendingCreateRef.current = null;
+        if (pendingCreateRef.current === pendingCreate) pendingCreateRef.current = null;
         setInput('');
         setSelectedInputs([]);
         setPendingUploads((current) => current.filter((upload) => !submittedFiles.has(upload.file)));

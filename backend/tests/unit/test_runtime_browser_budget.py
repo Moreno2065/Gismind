@@ -7,6 +7,7 @@ import importlib.util
 import json
 import multiprocessing
 import sqlite3
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
@@ -184,7 +185,7 @@ def test_evidence_is_durable_redacted_and_cohort_scoped(tmp_path):
     assert len(rows) == 1
     assert rows[0]['response_hash'] == HASH and rows[0]['http_calls'] == 1
     assert rows[0]['reservation_id'] == first['reservation_id']
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         dump = '\n'.join(connection.iterdump())
     assert 'secret-token' not in dump
     assert MESSAGES[0]['content'] not in dump
@@ -340,18 +341,18 @@ def authorize_upgrade(path, facts):
 
 
 def ledger_rows(path):
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         return {table: connection.execute(f'SELECT * FROM {table} ORDER BY rowid').fetchall()
                 for table in ('reservations', 'accounting_events', 'sqlite_sequence')}
 
 
 def policy_row(path):
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         return connection.execute('SELECT policy_json FROM budget_policy WHERE id=1').fetchone()[0]
 
 
 def receipt_rows(path):
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         return connection.execute('SELECT * FROM budget_policy_authorizations').fetchall()
 
 
@@ -401,13 +402,13 @@ def test_plain_construction_cannot_authorize_new_twenty_dollar_ledger(tmp_path, 
 @pytest.mark.parametrize('existing', ['empty-file', 'empty-policy-table'])
 def test_twenty_constructor_cannot_initialize_existing_empty_database(tmp_path, existing):
     path = tmp_path / 'empty.sqlite'
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         if existing == 'empty-policy-table':
             connection.execute('CREATE TABLE budget_policy (id INTEGER PRIMARY KEY,policy_json TEXT NOT NULL)')
         before = list(connection.iterdump())
     with pytest.raises((ValueError, sqlite3.OperationalError)):
         make_budget(path, max_usd=20)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert list(connection.iterdump()) == before
 
 
@@ -457,7 +458,7 @@ def test_invalid_authorization_facts_fail_before_any_mutation(tmp_path, changes)
     with pytest.raises(ValueError):
         authorize_upgrade(path, upgrade_facts(budget, **changes))
     assert ledger_rows(path) == before and policy_row(path) == policy
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='budget_policy_authorizations'").fetchone() is None
 
 
@@ -514,7 +515,7 @@ def test_audit_insert_exception_rolls_back_policy_and_new_audit_table(tmp_path, 
         with pytest.raises(sqlite3.DatabaseError):
             authorize_upgrade(path, upgrade_facts(budget))
     assert ledger_rows(path) == before and policy_row(path) == policy
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='budget_policy_authorizations'").fetchone() is None
 
 
@@ -544,7 +545,7 @@ def test_process_crash_before_receipt_commit_preserves_original_ledger(tmp_path)
     child.join(timeout=30)
     assert child.exitcode == 23
     assert ledger_rows(path) == before and policy_row(path) == policy
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='budget_policy_authorizations'").fetchone() is None
 
 
@@ -590,7 +591,7 @@ def test_cached_instance_reads_durable_twenty_policy_and_prices(tmp_path):
     budget = finalized_history(path)
     authorize_upgrade(path, upgrade_facts(budget))
     # Seed a synthetic occupied-cost boundary, without any provider or LLM response.
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("UPDATE reservations SET charged_nanos=? WHERE status='retained'", (9_999_999_999,))
     budget.input_rate = budget.output_rate = budget.cache_rate = 0
     entry = reserve(budget)
@@ -602,7 +603,7 @@ def test_cached_instance_reads_durable_twenty_policy_and_prices(tmp_path):
 
 def seed_zero_cost_history(path, count):
     """Synthetic SQLite accounting rows for offline cumulative-call boundaries."""
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.executemany('INSERT INTO reservations VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
             [(f'offline-history-{index}', 'synthetic-history', '0' * 64, 1.0,
               0, 0, 0, 4096, 2, 'settled', '{"offline_history": true}', 1.0)
@@ -666,7 +667,7 @@ def test_live_old_instance_rejects_unauthorized_persistent_policy_change(tmp_pat
                {'max_planner_calls': 1} if 'max_planner_calls' in change else {})
     budget = make_budget(path, **options)
     entry = reserve(budget)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute('UPDATE budget_policy SET policy_json=?',
                            (json.dumps({**budget.policy, **change}),))
     before = ledger_rows(path)
@@ -683,7 +684,7 @@ def test_first_upgrade_rejects_overdrawn_original_policy(tmp_path, damage):
     budget = make_budget(path)
     seed_zero_cost_history(path, 6001 if damage == 'over-call-cap' else 1)
     if damage == 'over-dollar-cap':
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute('UPDATE reservations SET charged_nanos=10000000001')
     before, policy = ledger_rows(path), policy_row(path)
     with pytest.raises(ValueError):
@@ -694,11 +695,11 @@ def test_first_upgrade_rejects_overdrawn_original_policy(tmp_path, damage):
 @pytest.mark.parametrize('damage', ['incomplete-reservations', 'missing-accounting-events'])
 def test_authorization_rejects_nonledger_schema_without_repair(tmp_path, damage):
     reference = make_budget(tmp_path / 'reference.sqlite')
-    with sqlite3.connect(reference.path) as connection:
+    with closing(sqlite3.connect(reference.path)) as connection, connection:
         schemas = {name: connection.execute('SELECT sql FROM sqlite_master WHERE name=?', (name,)).fetchone()[0]
                    for name in ('budget_policy', 'reservations', 'accounting_events')}
     path = tmp_path / 'wrong-schema.sqlite'
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(schemas['budget_policy'])
         connection.execute('INSERT INTO budget_policy VALUES (1,?)', (json.dumps(reference.policy),))
         if damage == 'incomplete-reservations':
@@ -709,11 +710,11 @@ def test_authorization_rejects_nonledger_schema_without_repair(tmp_path, damage)
             connection.execute(schemas['reservations'])
     if damage == 'missing-accounting-events':
         seed_zero_cost_history(path, 1)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         before = list(connection.iterdump())
     with pytest.raises(ValueError):
         authorize_upgrade(path, upgrade_facts(reference, expected_reservations=1))
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert list(connection.iterdump()) == before
 
 
@@ -721,14 +722,14 @@ def test_reopen_and_reserve_reject_damaged_authorized_ledger_schema(tmp_path):
     path = tmp_path / 'damaged-authorized.sqlite'
     budget = finalized_history(path)
     authorize_upgrade(path, upgrade_facts(budget))
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute('DROP TABLE accounting_events')
         before = list(connection.iterdump())
     with pytest.raises(ValueError):
         make_budget(path, max_usd=20, max_planner_calls=4802)
     with pytest.raises(ValueError):
         reserve(budget)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert list(connection.iterdump()) == before
 
 
@@ -739,7 +740,7 @@ def test_concurrent_reservations_cannot_exceed_twenty_dollar_cap(tmp_path):
     entry = reserve(budget)
     budget.retain(entry['reservation_id'], error_code='OFFLINE_BOUNDARY')
     bound = round(entry['reserved_usd'] * 1_000_000_000)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute('UPDATE reservations SET charged_nanos=0')
         connection.execute('UPDATE reservations SET charged_nanos=? WHERE reservation_id=?',
                            (20_000_000_000 - 2 * bound + 1, entry['reservation_id']))
@@ -791,7 +792,7 @@ def test_missing_or_tampered_authorization_fails_closed_before_reserve(tmp_path,
     path = tmp_path / 'tampered.sqlite'
     budget = finalized_history(path)
     authorize_upgrade(path, upgrade_facts(budget))
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         if tamper == 'delete-table':
             connection.execute('DROP TABLE budget_policy_authorizations')
         elif tamper == 'delete-row':
@@ -817,7 +818,7 @@ def test_missing_or_tampered_authorization_fails_closed_before_reserve(tmp_path,
 def test_hand_edited_twenty_policy_without_receipt_is_rejected(tmp_path):
     path = tmp_path / 'hand-edited.sqlite'
     budget = make_budget(path)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute('UPDATE budget_policy SET policy_json=?',
                            (json.dumps({**budget.policy, 'max_nanos': 20_000_000_000}),))
     with pytest.raises(ValueError):
@@ -832,7 +833,7 @@ def test_rehashed_inconsistent_receipt_still_fails_closed(tmp_path, field):
     budget = finalized_history(path)
     facts = upgrade_facts(budget)
     authorize_upgrade(path, facts)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         receipt = json.loads(connection.execute('SELECT receipt_json FROM budget_policy_authorizations').fetchone()[0])
         if field in {'old_policy', 'new_policy', 'expected_policy'}:
             receipt[field]['cache_rate'] = '0.005'
@@ -865,7 +866,7 @@ def test_summary_cli_remains_read_only_for_existing_and_missing_ledger(tmp_path,
     module.main()
     assert json.loads(capsys.readouterr().out)['max_cost_usd'] == 10
     assert (ledger_rows(path), policy_row(path)) == before
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert connection.execute("SELECT name FROM sqlite_master WHERE name='budget_policy_authorizations'").fetchone() is None
     missing = tmp_path / 'does-not-exist.sqlite'
     monkeypatch.setattr('sys.argv', ['runtime_browser_budget', '--db', str(missing)])

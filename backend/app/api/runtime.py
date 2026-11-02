@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 import uuid
@@ -25,6 +26,7 @@ from app.runtime import ArtifactStore, RuntimeDB, RuntimeStore, RuntimeSuperviso
 from app.runtime.contracts import validate_crs_value
 from app.runtime.db import utc_now
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["runtime"])
 TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
 
@@ -72,20 +74,36 @@ def get_runtime_messages(request: Request, session_id: str):
 
 
 @router.get("/sessions/{session_id}/runs")
-def list_session_runs(request: Request, session_id: str):
+def list_session_runs(request: Request, session_id: str, before: str | None = None):
     runtime, _artifacts, _supervisor = _resources(request)
     def read(conn):
         session = conn.execute("SELECT deleted_at FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         if session is None or session[0] is not None:
             return None
+        parameters: tuple = (session_id,)
+        boundary = ""
+        if before is not None:
+            cursor = conn.execute(
+                "SELECT created_at,run_id FROM runs WHERE session_id=? AND run_id=?", (session_id, before),
+            ).fetchone()
+            if cursor is None:
+                raise ValueError("invalid session run cursor")
+            boundary = " AND (created_at,run_id) < (?,?)"
+            parameters += (cursor["created_at"], cursor["run_id"])
         return [dict(row) for row in conn.execute(
             "SELECT run_id,session_id,status,run_version,created_at,updated_at FROM runs "
-            "WHERE session_id=? ORDER BY created_at DESC,run_id DESC LIMIT 200", (session_id,),
+            "WHERE session_id=?" + boundary + " ORDER BY created_at DESC,run_id DESC LIMIT 201", parameters,
         ).fetchall()]
-    items = runtime._read(read)
+    try:
+        items = runtime._read(read)
+    except ValueError:
+        return _error(request, 422, "INVALID_RUN_CURSOR", "cursor must identify a run in this session")
     if items is None:
         return _error(request, 404, "SESSION_NOT_FOUND", "session does not exist")
-    return {"items": items}
+    page = {"items": items[:200]}
+    if len(items) > 200:
+        page["next_cursor"] = items[199]["run_id"]
+    return page
 
 
 @router.patch("/sessions/{session_id}", status_code=204)
@@ -787,9 +805,15 @@ async def upload_runtime_artifact(
             crs=inspection.get("crs"),
         )
     except OverflowError as exc:
-        staged.unlink(missing_ok=True)
         return _error(request, 413, "ARTIFACT_TOO_LARGE", str(exc))
     except (OSError, ValueError) as exc:
-        staged.unlink(missing_ok=True)
         return _error(request, 422, "ARTIFACT_INVALID", str(exc))
+    finally:
+        # Cancellation and unexpected failures must also release bounded
+        # staging; a successful publication has already consumed this path.
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            # Report retained staging without replacing the original outcome.
+            logger.warning("Unable to remove upload staging file %s", staged, exc_info=True)
     return JSONResponse(status_code=201, content=_public_artifact(artifact), headers={"X-Request-ID": _request_id(request)})

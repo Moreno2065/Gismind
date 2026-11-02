@@ -1,8 +1,8 @@
 # Gismind GIS Runtime 技术架构与实施规格
 
 > 文档状态：Runtime 主链已实施；未标注“已实施”的条目仍是后续规格
-> 文档版本：1.17
-> 日期：2026-11-01
+> 文档版本：1.18
+> 日期：2026-11-02
 > 适用范围：Gismind 单机版下一代运行内核
 > 兼容策略：破坏性升级，不兼容旧会话、旧 checkpoint、旧 TaskPlan 与旧 SSE 传输契约
 
@@ -109,6 +109,18 @@ SSE 在发现事件缺口或无效游标后先重新取得运行快照。此时�
 首轮本地全量回归为后端 **3031 passed、6 skipped、298 warnings**，前端 **189 passed**；TypeScript 检查、生产构建与包体检查通过。新增测试覆盖实际 Hook/API 的请求交错、快照恢复失败、HTTP 范围和临时 SQLite 迁移；不调用真实 Provider，也不重新执行 1800 地图浏览器验收。第 1.4 节的真实地图验收保留其历史源码与日期边界，不能作为本轮改动后的新实测。后端 warning 主要来自 pyproj 的数组转标量弃用提示及 GIS 库的数据/几何提示，未在本轮屏蔽。
 
 随后 GitHub 跨平台回归发现 Windows 已退出的 Worker 仍可能因残留句柄而被误报为存活，阻止硬杀后的服务重启。`supervisor._pid_state` 现使用带 `SYNCHRONIZE` 权限的同一进程句柄执行零等待退出信号检查，始终关闭句柄；权限拒绝或探测失败继续返回未知，不据此接管锁。本机原生已退出子进程保留父句柄的场景已复现并修复，连同硬杀重启、排他 Worker、预算及资源限制相关回归 **148 passed**。另外修正测试 SQL 数字字面量的 SQLite 版本依赖，并在 Job Object helper 单元测试中显式指定被测试的 Windows 分支；这不表示 Unix 获得了 Windows Job Object 能力。远端全量结果以对应提交的 Runtime CI 运行记录为准。
+
+### 1.6 2026-11-02 历史成果恢复、空间元数据与资源释放修复（当前实现）
+
+`GET /api/sessions/{session_id}/runs` 保留每页最多 200 条，并增加 `before` / `next_cursor` 分页。游标由同一会话已有 Run 的 `(created_at, run_id)` 确定，保持原倒序，同时间戳和分页期间的新运行不会挤掉较早记录；其他会话或无效游标返回 `INVALID_RUN_CURSOR`。前端恢复时读取全部历史页，再按原四路并发读取运行快照，避免超过 200 次运行后较早的成果静默消失。后续页失败、重复游标和取消均明确终止读取，不把半截列表作为完整历史。
+
+同一 ChatPanel 挂载周期内，创建请求已在服务端提交但响应丢失时，相同 payload 的重试复用原幂等键及本地对话气泡，清除临时创建错误，不再重复追加用户消息和 assistant。修改文字或附件仍创建独立请求，已确认的真实 failed Run 及其诊断保留；成功重试后的缓存重新挂载也不重复该轮对话。本次没有增加未确认请求跨卸载持久化的新协议。
+
+Vector 发布前现使用既有 CRS 契约核对声明，并比较 JSON 中显式的 GeoJSON `crs`、`_physical_crs` 与 GCJ02 datum 标签。矛盾或无效声明在 CAS 发布前被拒绝；保持 EPSG 等价表示、无显式 marker 的既有 JSON Vector，以及 GCJ02 的 EPSG:4326 carrier。声明 GCJ02 时，显式 datum marker 只能是 GCJ02，不能以 WGS84/PROJECTED 标签混入。该校验拒绝显式证据冲突，不推断未标记坐标的真实 datum，也不构成新的真实地图验收。
+
+上传 staging 在成功、输入错误、意外失败和取消时统一清理；若文件系统拒绝删除，记录 warning 并保留原取消或 413/422 结果。清理只针对原 staging 路径，不删除已发布 CAS。RuntimeDB 初始化失败或被中断后关闭已经取得的连接；预算辅助连接在 PRAGMA/rollback 失败时也保证关闭，历史 evidence reader 正常返回和异常时均释放句柄。预算测试的 24 处临时连接补齐关闭，同时保留原事务提交/回滚语义；本轮未读取或修改实际运行数据库、预算数值、授权或付费调用状态。
+
+本轮最终本地后端全量离线回归与覆盖率采集为 **3070 passed、2 skipped、5 deselected、319 warnings**，前端 **194 passed**；typecheck、生产构建、包体检查、Runtime post-delete gate 和依赖一致性检查均通过。真实模型测试保持 opt-in，本轮未调用 Provider、未重跑历史 1800 地图验收。warning 仍包括 GIS 库提示及其他测试 fixture 的 SQLite 资源告警，不表示已经清零；远端跨平台结果以对应提交的 Runtime CI 记录为准。
 
 ## 2. 现状审计
 

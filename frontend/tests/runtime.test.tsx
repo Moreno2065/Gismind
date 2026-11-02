@@ -97,7 +97,7 @@ describe('Create Run idempotency', () => {
 
   it('reuses the create ID after a committed response is lost and keeps the original attachments', async () => {
     loseCreateResponse = true;
-    await composer(true);
+    const view = await composer(true);
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     await screen.findByText(/服务端创建后响应丢失/);
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('分析同一任务');
@@ -110,6 +110,16 @@ describe('Create Run idempotency', () => {
     expect(snapshots.size).toBe(1);
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
     expect(screen.queryByText(/input.csv · 就绪/)).toBeNull();
+    expect(screen.getAllByText('分析同一任务')).toHaveLength(1);
+    expect(screen.getAllByText('Gismind')).toHaveLength(1);
+    expect(screen.queryByText('RUN_CREATE_FAILED')).toBeNull();
+    await waitFor(() => expect(localStorage.getItem('gismind.messages.s')).toContain('run_1'));
+    view.unmount();
+    render(<ChatPanel sessionId="s" />);
+    await screen.findByText('Run running');
+    expect(screen.getAllByText('分析同一任务')).toHaveLength(1);
+    expect(screen.getAllByText('Gismind')).toHaveLength(1);
+    expect(screen.queryByText('RUN_CREATE_FAILED')).toBeNull();
   });
 
   it('does not clear text or attachments while the create response is unresolved', async () => {
@@ -144,10 +154,17 @@ describe('Create Run idempotency', () => {
     await waitFor(() => expect(creates()).toHaveLength(2));
     expect(creates()[1].body.client_request_id).not.toBe(creates()[0].body.client_request_id);
     expect(createdByRequestId.size).toBe(2);
+    if (changed !== 'session') {
+      expect(screen.getAllByText('Gismind')).toHaveLength(2);
+      expect(screen.getByText('RUN_CREATE_FAILED')).toBeTruthy();
+      if (changed === 'attachments') expect(screen.getAllByText('分析同一任务')).toHaveLength(2);
+    }
   });
 
-  it('retires a confirmed create ID before the next intentional identical task', async () => {
-    nextSnapshots = [snapshot('first-confirmed', 'completed'), snapshot('next-confirmed', 'completed')];
+  it.each(['completed', 'failed'] as const)('retires a confirmed create ID before the next intentional identical task after a %s Run', async (status) => {
+    nextSnapshots = [snapshot('first-confirmed', status, {
+      diagnostic: status === 'failed' ? { code: 'FIRST_RUN_FAILED', message: '首个运行失败' } : null,
+    }), snapshot('next-confirmed', 'completed')];
     await composer();
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     await waitFor(() => expect(requests.some(item => item.url === 'GET /api/runs/first-confirmed')).toBe(true));
@@ -158,6 +175,10 @@ describe('Create Run idempotency', () => {
     await waitFor(() => expect(creates()).toHaveLength(2));
     expect(creates()[1].body.client_request_id).not.toBe(creates()[0].body.client_request_id);
     expect(createdByRequestId.size).toBe(2);
+    await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false));
+    expect(screen.getAllByText('分析同一任务')).toHaveLength(2);
+    expect(screen.getAllByText('Gismind')).toHaveLength(2);
+    if (status === 'failed') expect(screen.getByText('首个运行失败')).toBeTruthy();
   });
 });
 

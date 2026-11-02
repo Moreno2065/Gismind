@@ -141,9 +141,24 @@ export async function confirmRuntimeRun(runId: string, commandId: string, confir
 }
 
 export async function getSessionRuns(sessionId: string, signal?: AbortSignal): Promise<SessionRun[]> {
-  const res = await fetch(`${BASE}/sessions/${encodeURIComponent(sessionId)}/runs`, { headers: authHeaders(), signal });
-  if (!res.ok) await readError(res, 'get session runs failed');
-  return ((await res.json()) as { items: SessionRun[] }).items;
+  const items: SessionRun[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  while (true) {
+    if (signal?.aborted) throw new DOMException('Session recovery aborted', 'AbortError');
+    const query = cursor === undefined ? '' : '?before=' + encodeURIComponent(cursor);
+    const res = await fetch(`${BASE}/sessions/${encodeURIComponent(sessionId)}/runs${query}`, { headers: authHeaders(), signal });
+    if (!res.ok) await readError(res, 'get session runs failed');
+    const page = (await res.json()) as { items: SessionRun[]; next_cursor?: unknown };
+    if (!Array.isArray(page.items)) throw new Error('Invalid session run pagination');
+    items.push(...page.items);
+    if (page.next_cursor === undefined || page.next_cursor === null) return items;
+    if (typeof page.next_cursor !== 'string' || !page.next_cursor || seenCursors.has(page.next_cursor)) {
+      throw new Error('Invalid session run pagination');
+    }
+    cursor = page.next_cursor;
+    seenCursors.add(cursor);
+  }
 }
 
 export async function getRuntimeArtifact(artifactId: string, signal?: AbortSignal): Promise<ArtifactSummary> {
