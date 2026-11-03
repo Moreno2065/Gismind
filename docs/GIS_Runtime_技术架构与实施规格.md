@@ -1,8 +1,8 @@
 # Gismind GIS Runtime 技术架构与实施规格
 
 > 文档状态：Runtime 主链已实施；未标注“已实施”的条目仍是后续规格
-> 文档版本：1.18
-> 日期：2026-11-02
+> 文档版本：1.19
+> 日期：2026-11-03
 > 适用范围：Gismind 单机版下一代运行内核
 > 兼容策略：破坏性升级，不兼容旧会话、旧 checkpoint、旧 TaskPlan 与旧 SSE 传输契约
 
@@ -121,6 +121,14 @@ Vector 发布前现使用既有 CRS 契约核对声明，并比较 JSON 中显�
 上传 staging 在成功、输入错误、意外失败和取消时统一清理；若文件系统拒绝删除，记录 warning 并保留原取消或 413/422 结果。清理只针对原 staging 路径，不删除已发布 CAS。RuntimeDB 初始化失败或被中断后关闭已经取得的连接；预算辅助连接在 PRAGMA/rollback 失败时也保证关闭，历史 evidence reader 正常返回和异常时均释放句柄。预算测试的 24 处临时连接补齐关闭，同时保留原事务提交/回滚语义；本轮未读取或修改实际运行数据库、预算数值、授权或付费调用状态。
 
 本轮最终本地后端全量离线回归与覆盖率采集为 **3070 passed、2 skipped、5 deselected、319 warnings**，前端 **194 passed**；typecheck、生产构建、包体检查、Runtime post-delete gate 和依赖一致性检查均通过。真实模型测试保持 opt-in，本轮未调用 Provider、未重跑历史 1800 地图验收。warning 仍包括 GIS 库提示及其他测试 fixture 的 SQLite 资源告警，不表示已经清零；远端跨平台结果以对应提交的 Runtime CI 记录为准。
+
+### 1.7 2026-11-03 端到端恢复与兼容请求修复（当前实现）
+
+缺少 CRS 的空间附件现在可以沿既有 `CRS_REQUIRED → /resume` 路径恢复。Compiler 的暂停诊断绑定具体 File，用户仍只填写原有 `file.declared_crs` 声明；Runtime 在规划租约事务内创建共享原 CAS bytes、带用户声明和 `derived_from` 血缘的新 File Artifact，再把该 ID 交给 Planner、Compiler 和 Worker。原上传的元数据与下载内容保持不变。多个附件逐一补充，无效声明可以更正；当前不可见的文件和未知未来任务输出不能借此获得声明。新回归实际经过上传、补充 API、隔离 Worker，并独立读取 GPKG/GeoTIFF 核对 CRS、坐标、栅格值与元数据。
+
+模型先返回 reasoning-only 内容、继而兼容请求遇到 429/503 时，现沿用原有重试次数、HTTP 调用预算与总期限；预算耗尽、禁用重试和 403 仍按原规则终止。前端恢复同一会话的新 Run 后，旧 Run 的迟到终态仅更新自身消息，不再清除新 Run 的绑定、断开其 SSE 或错误解锁 composer。
+
+本轮本地全量离线回归为后端 **3080 passed、2 skipped、5 deselected**，前端 **195 passed**；类型检查、生产构建、包体检查、Runtime post-delete gate 和依赖一致性检查均通过。该组结果验证上述回归，不计作新的真实模型或地图成功率测量。真实模型仍使用显式 opt-in 和原共享费用账本，结果另行记录。
 
 ## 2. 现状审计
 

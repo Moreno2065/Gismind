@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 from queue import Empty
 from typing import Any
 
-from .contracts import CompiledTask, PlannerDraft, RetryPolicy, ToolContractRegistry
-from .compiler import AwaitingInputDiagnostic, CompileError, Compiler
+from .contracts import CompiledTask, PlannerDraft, RetryPolicy, ToolContractRegistry, validate_crs_value
+from .compiler import AwaitingInputDiagnostic, CompileError, Compiler, file_crs_patch_schema
 from .db import utc_now
 from .errors import bounded_error_message, execution_error_code
 from .llm_planner import (
@@ -1062,7 +1062,7 @@ class RuntimeSupervisor:
         for run_id in run_ids:
             self._finalize_run_if_terminal(run_id)
 
-    def _planner_request(self, run_id: str) -> PlannerRequest:
+    def _planner_request(self, run_id: str, *, planner_claim: RunClaim) -> PlannerRequest:
         run = self.runtime.get_run(run_id)
         if run is None:
             raise PlannerError("RUN_NOT_FOUND", "run does not exist")
@@ -1162,11 +1162,74 @@ class RuntimeSupervisor:
         patch: dict[str, Any] = {}
         for value in decoded[1:]:
             patch.update(value)
+        input_artifacts, prior_artifacts = self._resolve_file_crs_declarations(
+            run_id, planner_claim, input_artifacts, prior_artifacts,
+            [(int(row["revision"]), value) for row, value in zip(rows[1:], decoded[1:])],
+        )
         return PlannerRequest(
             run_id=run_id, input_revision=int(run["input_revision"]), user_goal=goal.strip(),
             input_artifacts=tuple(input_artifacts), revision_patch=patch,
             session_messages=tuple(session_messages), prior_artifacts=tuple(prior_artifacts),
         )
+
+    def _resolve_file_crs_declarations(self, run_id, claim, inputs, prior, revisions):
+        """Publish user metadata as a new File identity before planning/execution."""
+        views = [*inputs, *prior]
+        aliases = {item["artifact_id"]: item["artifact_id"] for item in views}
+        declarations = [(revision, value["file"]) for revision, value in revisions
+                        if isinstance(value.get("file"), dict) and "declared_crs" in value["file"]]
+        for index, (revision, file_patch) in enumerate(declarations):
+            target = file_patch.get("artifact_id")
+            source_id = aliases.get(target) if isinstance(target, str) else None
+            source = self.runtime.get_artifact(source_id) if source_id else None
+            try:
+                if source is None or source.get("type") != "File":
+                    raise ValueError("请为当前附件提供坐标系；声明目标必须是本次明确可见的文件。")
+                declaration = file_patch["declared_crs"]
+                if not isinstance(declaration, dict) or set(declaration) != {"value", "source"} or declaration.get("source") != "user":
+                    raise ValueError("坐标系声明必须包含 value 和 source='user'。")
+                crs = validate_crs_value(declaration["value"])
+                if crs is None:
+                    raise ValueError("请提供明确的坐标系。")
+                inspection = source.get("schema", {}).get("inspection", {})
+                if inspection.get("artifact_type") not in {"Vector", "Raster"} or source.get("crs") is not None:
+                    raise ValueError("坐标系补充仅适用于缺少物理坐标系的空间附件。")
+                from .upload_inspection import validate_declarations
+                validate_declarations(inspection, crs, None)
+            except (TypeError, ValueError) as exc:
+                # A later answer may correct an earlier rejected declaration.
+                # Successful earlier answers still bind their own File, even
+                # when another attachment subsequently needs clarification.
+                if index < len(declarations) - 1:
+                    continue
+                missing = next((item["artifact_id"] for item in views
+                    if item.get("type") == "File" and item.get("crs") is None
+                    and not item.get("schema", {}).get("file", {}).get("declared_crs")), None)
+                raise AwaitingInputDiagnostic("CRS_REQUIRED", "patch.file.declared_crs", str(exc), {
+                    "artifact_id": missing or source_id, "patch_schema": file_crs_patch_schema(missing or source_id),
+                }) from exc
+            schema = json.loads(json.dumps(source["schema"]))
+            schema.setdefault("file", {})["declared_crs"] = declaration
+            derived_id = f"art_{uuid.uuid5(uuid.NAMESPACE_URL, f'gismind:file-crs:{run_id}:{revision}:{source_id}').hex}"
+            # File bytes and the original record are unchanged. The immutable
+            # derived record is what both the Compiler and Worker will resolve.
+            with self.runtime.transaction() as conn:
+                self.runtime._assert_planner_fence_conn(conn, run_id, claim)
+                existing = self.runtime.get_artifact(derived_id)
+                if existing is None:
+                    existing = self.runtime.insert_artifact({
+                        **source, "artifact_id": derived_id, "origin": "upload",
+                        "producer_task_id": None, "schema": schema, "created_at": utc_now(),
+                    }, parents=[source_id], event=(run_id, "artifact.declared", {
+                        "artifact_id": derived_id, "source_artifact_id": source_id,
+                        "input_revision": revision, "declared_crs": declaration,
+                    }))
+            for item in views:
+                if item["artifact_id"] == source_id:
+                    item.update(artifact_id=derived_id, schema=existing["schema"])
+            aliases = {key: derived_id if value == source_id else value for key, value in aliases.items()}
+            aliases[derived_id] = derived_id
+        return views[:len(inputs)], views[len(inputs):]
 
     def _planner_identity(self, request: PlannerRequest | None = None) -> tuple[str, str, str, str, str]:
         provider = str(getattr(self.planner, "provider", type(self.planner).__name__))
@@ -1419,7 +1482,7 @@ class RuntimeSupervisor:
         repair_used = False
         attempt_response: dict[str, Any] = {}
         try:
-            request = self._planner_request(claim.run_id)
+            request = self._planner_request(claim.run_id, planner_claim=claim)
             identity = self._planner_identity(request)
             request_catalog = candidate_catalog(self.registry, request)
             request_hash = hashlib.sha256(json.dumps({
@@ -1588,7 +1651,8 @@ class RuntimeSupervisor:
             try:
                 self.runtime.reject_planning(
                     claim.run_id, planner_claim=claim, code=exc.code,
-                    diagnostics={"path": exc.path, "message": exc.message, "patch_schema": exc.details.get("patch_schema", {"type": "object"})},
+                    diagnostics={**exc.details, "path": exc.path, "message": exc.message,
+                                 "patch_schema": exc.details.get("patch_schema", {"type": "object"})},
                     awaiting_input=True,
                 )
             except RuntimeError as fence_error:

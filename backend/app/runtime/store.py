@@ -1592,6 +1592,21 @@ class RuntimeStore:
                 return response
             revision = int(run[2]) + 1
             revision_id = f"revision_{uuid.uuid4().hex}"
+            revision_patch = patch
+            # The compiler's paused diagnostic identifies the exact File that
+            # needs a declaration. Preserve the public answer shape without
+            # requiring users to copy an internal Artifact ID into JSON.
+            if isinstance(patch, dict) and isinstance(patch.get("file"), dict):
+                file_patch = patch["file"]
+                if "declared_crs" in file_patch and "artifact_id" not in file_patch:
+                    question = c.execute(
+                        "SELECT payload_json FROM events WHERE run_id=? AND event_type='run.awaiting_input' ORDER BY seq DESC LIMIT 1",
+                        (run_id,),
+                    ).fetchone()
+                    awaiting = json.loads(question[0]) if question is not None else {}
+                    details = awaiting.get("diagnostic", {})
+                    if awaiting.get("code") == "CRS_REQUIRED" and isinstance(details, dict) and details.get("artifact_id"):
+                        revision_patch = {**patch, "file": {**file_patch, "artifact_id": details["artifact_id"]}}
             payload = {"request_hash": request_hash, "request": {"patch": patch}}
             c.execute(
                 "INSERT INTO run_commands(command_id,run_id,command_type,payload_json,idempotency_key,created_at) VALUES (?,?,?,?,?,?)",
@@ -1599,7 +1614,7 @@ class RuntimeStore:
             )
             c.execute(
                 "INSERT INTO run_input_revisions(revision_id,run_id,revision,input_json,created_at) VALUES (?,?,?,?,?)",
-                (revision_id, run_id, revision, _json(patch), now),
+                (revision_id, run_id, revision, _json(revision_patch), now),
             )
             c.execute(
                 "UPDATE runs SET input_revision=?,status='queued',run_version=run_version+1,updated_at=? WHERE run_id=?",

@@ -24,6 +24,7 @@ export function ChatPanel(props: ChatPanelProps) { return <RuntimeChatPanel key=
 
 function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
   const [activeRun, setActiveRun] = useState<ActiveRun | null>(() => loadActiveRun(sessionId));
+  const activeRunRef = useRef(activeRun);
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const cached = loadMessages(sessionId); const active = loadActiveRun(sessionId);
     return active ? ensureAssistant(cached, active) : cached;
@@ -63,6 +64,7 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
   }, []);
 
   const attachRun = useCallback((binding: ActiveRun) => {
+    activeRunRef.current = binding;
     saveActiveRun(sessionId, binding);
     setMessages((current) => ensureAssistant(current, binding));
     setActiveRun(binding);
@@ -164,11 +166,12 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     if (terminalRunStatuses.has(projection.status) && runtime.terminalSettled) {
       if (settlingRef.current.has(runId)) return;
       settlingRef.current.add(runId);
+      const isCurrentRun = () => activeRunRef.current?.runId === runId && activeRunRef.current?.messageId === messageId;
       void getRuntimeRun(runId, signal).then((snapshot) => {
         if (signal?.aborted || snapshot.session_id !== sessionId || snapshot.run_id !== runId) return;
-        if (!terminalRunStatuses.has(snapshot.status)) { settlingRef.current.delete(runId); void runtime.connect(); return; }
+        if (!terminalRunStatuses.has(snapshot.status)) { settlingRef.current.delete(runId); if (isCurrentRun()) void runtime.connect(); return; }
         setArtifacts((current) => mergeArtifacts(current, snapshot.output_artifacts));
-        setLastProjection(projectionFromSnapshot(snapshot));
+        if (isCurrentRun()) setLastProjection(projectionFromSnapshot(snapshot));
         // A terminal event carries identities, not necessarily full metadata.
         // Keep a durable map reference even if the final content read is delayed.
         updateAssistant(messageId, (message) => ({ ...message, blocks: [
@@ -177,10 +180,15 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
             ? { type: 'map', artifact_id: artifact.artifact_id, layers: [], bbox: [0, 0, 0, 0], expired: true }
             : { type: 'text', artifact_id: artifact.artifact_id, content: '[下载 ' + artifact.type + ' Artifact](' + runtimeArtifactContentUrl(artifact) + ')' }),
         ] }));
-        saveActiveRun(sessionId, null); setActiveRun(null); onSessionUpdate?.();
+        // Session recovery may have attached another Run while this read waited.
+        // Preserve this Run's results without detaching that newer binding.
+        if (isCurrentRun()) {
+          activeRunRef.current = null;
+          saveActiveRun(sessionId, null); setActiveRun(null); onSessionUpdate?.();
+        }
       }).catch((error) => {
         settlingRef.current.delete(runId);
-        if (!signal?.aborted) setCommandError('最终结果同步失败，请重新连接：' + (error as Error).message);
+        if (!signal?.aborted && isCurrentRun()) setCommandError('最终结果同步失败，请重新连接：' + (error as Error).message);
       });
     }
   }, [activeRun, onSessionUpdate, projection, runtime.terminalSettled, runtime.connect, sessionId, updateAssistant]);

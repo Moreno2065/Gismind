@@ -46,6 +46,21 @@ class AwaitingInputDiagnostic(CompileError):
     """A deterministic missing/ambiguous input that requires user input."""
 
 
+def file_crs_patch_schema(artifact_id: str | None) -> dict[str, Any]:
+    """The paused Run binds the File; the user supplies its CRS declaration."""
+    return {"type": "object", "required": ["file"], "properties": {"file": {
+        "type": "object", "required": ["declared_crs"], "additionalProperties": False,
+        "properties": {
+            "artifact_id": {"type": "string", **({"enum": [artifact_id]} if artifact_id else {})},
+            "declared_crs": {"type": "object", "required": ["value", "source"],
+                "additionalProperties": False, "properties": {
+                    "value": {"type": "object"},
+                    "source": {"type": "string", "enum": ["user"]},
+                }},
+        },
+    }}}
+
+
 _EXPORT_FORMAT_TOKEN = re.compile(
     r"(?<![a-z0-9])(?:geo[ -]?package|geo[ -]?json|geo[ -]?tiff|tiff|tif|gpkg|csv|shapefile|shp|kml|gml|geoparquet|parquet|xlsx|xls|json|png|jpe?g|webp|bmp|gif|pdf)(?![a-z0-9])",
     re.IGNORECASE,
@@ -828,10 +843,12 @@ class Compiler:
     def _output_specs(self, contract: ToolContract, params: dict[str, Any], inputs, task_key: str, task_outputs: dict[str, dict[str, OutputSpec]] | None = None) -> list[OutputSpec]:
         input_crs = None
         input_schema: dict[str, Any] | None = None
+        file_artifact_id = None
         for value in inputs.values():
             refs = value if isinstance(value, list) else [value]
             for ref in refs:
                 if isinstance(ref, ArtifactRef):
+                    file_artifact_id = ref.artifact_id
                     if ref.crs is not None:
                         input_crs = ref.crs
                     if self.artifact_lookup is not None:
@@ -869,7 +886,9 @@ class Compiler:
         if contract.name == "geo.geocode":
             input_crs = {"kind": "GCJ02"}
         if input_crs is None and contract.name in {"io.load_vector", "io.load_raster"} and any((port.crs_policy or {}).get("required") for port in contract.output_ports.values()):
-            raise AwaitingInputDiagnostic("CRS_REQUIRED", f"tasks.{task_key}.outputs", "spatial File input requires schema.file.declared_crs", {"patch_schema": {"type": "object", "properties": {"file": {"properties": {"declared_crs": {"type": "object"}}}}}})
+            raise AwaitingInputDiagnostic("CRS_REQUIRED", f"tasks.{task_key}.outputs", "spatial File input requires schema.file.declared_crs", {
+                "artifact_id": file_artifact_id, "patch_schema": file_crs_patch_schema(file_artifact_id),
+            })
         if contract.name == "file.export":
             if input_crs is not None and input_crs.get("kind") == "GCJ02":
                 raise CompileError("CRS_CONFLICT", f"tasks.{task_key}.inputs.input", "file.export requires a physical EPSG CRS; convert GCJ02 explicitly")

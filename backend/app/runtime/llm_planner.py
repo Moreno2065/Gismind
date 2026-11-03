@@ -1417,6 +1417,9 @@ ordered_stages 是明确编号顺序或明确指向上一步结果的自然顺�
                         compatibility_used = True
                         payload = fallback_payload
                         response = await post(fallback_payload)
+                        if response.status_code in retryable_statuses and attempt < self.max_retries:
+                            await budget.wait(asyncio.sleep(min(2.0, 0.25 * (2 ** attempt))))
+                            continue
                         if response.status_code >= 400:
                             raise PlannerError(
                                 "LLM_HTTP_ERROR", f"LLM provider returned HTTP {response.status_code}",
