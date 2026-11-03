@@ -399,9 +399,9 @@ def build_goal_requirements(goal: str, artifacts: Sequence[Mapping[str, Any]] = 
     require("attribute.filter", r"(?:筛选|过滤).{0,30}(?:字段|列|等于|大于|小于|不超过|不少于|至少|至多)|(?:字段|列).{0,20}(?:筛选|过滤)|\bfilter\b.{0,30}\b(?:field|column|where)\b")
     require("vector.point_on_surface", r"(?:面内点|表面点)|(?:标注|标签点).{0,30}(?:里面|内部|面内)|(?:里面|内部|面内).{0,30}(?:标注|标签点)")
     require("map.build", r"(?:在|到|成|为)?地图(?:上|中)?(?:显示|展示|呈现|标出)?|(?:显示|展示|画出).{0,12}地图")
-    from .compiler import _requested_export_formats
+    from .compiler import _EXPORT_VERB, _requested_export_formats
     formats = _requested_export_formats(answer) or _requested_export_formats(goal)
-    download = re.search(r"导出|下载|另存为|\b(?:export|download|save)\b", positive, re.I)
+    download = _EXPORT_VERB.search(positive)
     native_raster_delivery = bool(download and (formats == {'geotiff'} or not formats and re.search(
         r"(?:提供|输出|导出|下载|最终|结果)[^。；;\n]{0,24}(?:栅格|\braster\b|\bgeo[ -]?tiff\b)|"
         r"(?:栅格|\braster\b|\bgeo[ -]?tiff\b)[^。；;\n]{0,24}(?:供下载|下载|导出)", positive, re.I)))

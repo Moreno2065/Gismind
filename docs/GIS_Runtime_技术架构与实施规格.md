@@ -128,7 +128,11 @@ Vector 发布前现使用既有 CRS 契约核对声明，并比较 JSON 中显�
 
 模型先返回 reasoning-only 内容、继而兼容请求遇到 429/503 时，现沿用原有重试次数、HTTP 调用预算与总期限；预算耗尽、禁用重试和 403 仍按原规则终止。前端恢复同一会话的新 Run 后，旧 Run 的迟到终态仅更新自身消息，不再清除新 Run 的绑定、断开其 SSE 或错误解锁 composer。
 
-本轮本地全量离线回归为后端 **3080 passed、2 skipped、5 deselected**，前端 **195 passed**；类型检查、生产构建、包体检查、Runtime post-delete gate 和依赖一致性检查均通过。该组结果验证上述回归，不计作新的真实模型或地图成功率测量。真实模型仍使用显式 opt-in 和原共享费用账本，结果另行记录。
+上述三处修复的本地全量离线回归为后端 **3080 passed、2 skipped、5 deselected**，前端 **195 passed**；类型检查、生产构建、包体检查、Runtime post-delete gate 和依赖一致性检查均通过，提交 `f64912f` 的 Windows/Linux/前端 Runtime CI 全部通过。该组离线结果不计作新的真实模型或地图成功率测量。
+
+随后依照用户新授权，通过 `tests.live.runtime_small_e2e` 实际调用 `deepseek-flash`，验证上传 API、持久化规划、Compiler、隔离 Worker、成果下载和独立物理读取。首轮四例为 **3 passed、1 failed**：缺 CRS 矢量恢复、缺 CRS 栅格恢复、筛选后 100 米缓冲均通过；“计算附件 DEM 的坡度，单位为度，输出 GeoTIFF”因交付动词识别遗漏“输出”而被误按矢量导出格式拒绝。现统一使用 Compiler 已有的交付动词识别，保留最终非空、带 CRS 的 Raster 数据流约束及非 TIFF 格式拒绝。六条新增回归连同原套件为 **44 passed**。只复测失败的坡度案例后通过，Rasterio 核对全部像元为解析解 45°，网格和 EPSG:3857 不变。缓冲结果由独立 Shapely 几何核对，最大 Hausdorff 误差约 `1.17e-10 m`；缺 CRS 两例的原始上传元数据与下载 bytes 不变。
+
+本次真实验证共八个已结算 Provider 请求，费用账本增加 **USD 0.014206920**；总占用 **USD 15.832222428 / 20**，仍保留原十三笔未知结果预留、无 pending。原首轮与单例复测结果分别保存在 `.gismind/small-live-e2e-20261103-01`、`-02`，未覆盖失败记录。这是四个限定案例的实际结果，包含一次修复后复测，不是新的总体成功率或历史 1800 地图重验。
 
 ## 2. 现状审计
 

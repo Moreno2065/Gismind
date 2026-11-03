@@ -48,6 +48,29 @@ def test_explicit_native_tiff_format_uses_the_checked_raster_output(format_name)
     assert plan.tasks[-1].outputs[0].artifact_type == 'Raster'
 
 
+@pytest.mark.parametrize('delivery', [
+    '输出GeoTIFF', '保存成TIFF文件', '另存TIFF文件',
+    'write as GeoTIFF', 'save as TIFF',
+])
+def test_slope_delivery_verbs_use_native_geotiff_instead_of_vector_export(delivery):
+    goal = f'计算附件DEM的坡度，单位为度，{delivery}。'
+    slope = PlannerStepDraft(task_key='slope', op='raster.slope',
+        inputs={'raster': ArtifactRef(artifact_id='source', type='Raster', crs=CRS)},
+        params={'degree': True})
+    plan = compile_goal(goal, [slope])
+    assert [task.op for task in plan.tasks] == ['raster.slope']
+    assert plan.tasks[-1].outputs[0].artifact_type == 'Raster'
+    assert build_goal_requirements(goal, [artifact()])['native_raster_delivery']['format'] == 'geotiff'
+
+
+def test_output_verb_cannot_pass_a_vector_as_native_geotiff():
+    vector = PlannerStepDraft(task_key='buffer', op='vector.buffer',
+        inputs={'vector': ArtifactRef(artifact_id='source', type='Vector', crs=CRS)},
+        params={'distance_m': 100})
+    with pytest.raises(CompileError, match='GOAL_DELIVERY_TYPE_MISMATCH'):
+        compile_goal('生成100米缓冲区，输出GeoTIFF。', [vector], kind='Vector')
+
+
 @pytest.mark.parametrize('format_name', ['CSV', 'PNG', 'GPKG', 'GeoJSON'])
 def test_native_raster_does_not_satisfy_other_explicit_formats(format_name):
     with pytest.raises(CompileError):
