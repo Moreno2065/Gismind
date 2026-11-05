@@ -63,7 +63,7 @@ jobs:
           python -c "from pathlib import Path; paths = [Path('test-results/backend.xml'), Path('test-results/coverage.xml')]; missing = [str(p) for p in paths if not p.is_file() or not p.stat().st_size]; assert not missing, 'Missing or empty backend test evidence: ' + ', '.join(missing)"
       - name: Preserve test evidence even on failure
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: backend-${{ matrix.os }}
           path: backend/test-results/
@@ -93,7 +93,7 @@ jobs:
           node -e "const fs = require('node:fs'); const p = 'test-results/frontend.xml'; if (!fs.existsSync(p) || fs.statSync(p).size === 0) throw new Error('Missing or empty frontend test evidence: ' + p)"
       - run: npm run typecheck
       - run: npm run build
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: frontend/dist/
@@ -101,7 +101,7 @@ jobs:
           retention-days: 14
       - name: Preserve frontend test evidence even on failure
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-test-results
           path: frontend/test-results/
