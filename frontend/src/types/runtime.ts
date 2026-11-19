@@ -2,6 +2,20 @@ import type { MapLayer } from '@/types/message';
 
 export type RunStatus = 'queued' | 'planning' | 'awaiting_input' | 'ready' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
 
+export interface ArtifactRasterPreview {
+  artifact_id: string;
+  crs: { kind: 'WGS84' };
+  bbox: [number, number, number, number];
+  width: number;
+  height: number;
+  band: number;
+  band_count: number;
+  nodata: string | null;
+  value_range: [number, number] | null;
+  masked_pixels: number;
+  png_b64: string;
+}
+
 export interface ArtifactSummary {
   artifact_id: string;
   origin?: 'upload' | 'task';

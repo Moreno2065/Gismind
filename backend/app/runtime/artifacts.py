@@ -495,7 +495,9 @@ class ArtifactStore:
                 raise ValueError("artifact storage URI is not the canonical CAS path")
             if not path.is_file() or path.stat().st_size != int(artifact["size_bytes"]):
                 raise ValueError("artifact CAS file is missing or has an unexpected size")
-            if hashlib.sha256(path.read_bytes()).hexdigest() != content_hash:
+            with path.open("rb") as source:
+                actual_hash = hashlib.file_digest(source, "sha256").hexdigest()
+            if actual_hash != content_hash:
                 raise ValueError("artifact CAS content hash mismatch")
             return path
         except (OSError, KeyError, TypeError) as exc:

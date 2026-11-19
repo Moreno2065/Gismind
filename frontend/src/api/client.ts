@@ -9,6 +9,7 @@ import type {
   SessionMeta,
 } from '@/types/session';
 import type {
+  ArtifactRasterPreview,
   ArtifactSummary,
   CreateRunRequest,
   CreateRunResponse,
@@ -175,6 +176,12 @@ export function runtimeArtifactContentUrl(artifact: Pick<ArtifactSummary, 'artif
 export async function getRuntimeArtifactContent(artifactId: string, signal?: AbortSignal): Promise<unknown> {
   const res = await fetch(runtimeArtifactContentUrl({ artifact_id: artifactId }), { headers: authHeaders(), signal });
   if (!res.ok) await readError(res, 'get artifact content failed');
+  return res.json();
+}
+
+export async function getRuntimeRasterPreview(artifactId: string, signal?: AbortSignal): Promise<ArtifactRasterPreview> {
+  const res = await fetch(`${BASE}/artifacts/${encodeURIComponent(artifactId)}/raster-preview`, { headers: authHeaders(), signal });
+  if (!res.ok) await readError(res, '无法读取栅格预览');
   return res.json();
 }
 

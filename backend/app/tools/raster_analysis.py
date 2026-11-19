@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import numpy as np
 import rasterio
+from rasterio.enums import MaskFlags
 from rasterio.transform import Affine
 from rasterio.warp import reproject as rio_reproject, calculate_default_transform
 from rasterio.mask import mask
@@ -413,8 +414,10 @@ class RasterAnalyzer:
                     mask_gdf = mask_gdf.to_crs(src.crs)
 
                 out_image, out_transform = mask(
-                    src, mask_gdf.geometry, crop=True
+                    src, mask_gdf.geometry, crop=True, filled=False
                 )
+                colorinterp = src.colorinterp
+                mask_flags = src.mask_flag_enums[0]
                 out_meta = src.meta.copy()
                 out_meta.update({
                     "driver": "GTiff",
@@ -428,9 +431,16 @@ class RasterAnalyzer:
                 dst_path = tmp.name
                 tmp.close()
 
-            with rasterio.open(dst_path, "w", **out_meta) as dst:
-                dst.write(out_image)
-                out_image_arr = out_image[0] if out_image.ndim == 3 else out_image
+            nodata = out_meta.get("nodata")
+            uses_alpha = MaskFlags.alpha in mask_flags
+            explicit_mask = MaskFlags.per_dataset in mask_flags and not uses_alpha
+            invalid = np.ma.getmaskarray(out_image[0])
+            # The CAS stores one TIFF. An external .msk would be lost at publication.
+            with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True), rasterio.open(dst_path, "w", **out_meta) as dst:
+                dst.colorinterp = colorinterp
+                dst.write(out_image.filled(0 if nodata is None else nodata))
+                if explicit_mask or (nodata is None and not uses_alpha and invalid.any()):
+                    dst.write_mask(~invalid)
 
             with rasterio.open(dst_path) as src2:
                 arr = src2.read(1)

@@ -834,11 +834,46 @@ class RuntimeSupervisor:
         self._planner_claim_refresh: dict[str, RunClaim] = {}
         self._prefer_task: dict[str, bool] = {}
         self._worker_stop_events: dict[str, Any] = {}
+        self._raster_preview_slot = threading.BoundedSemaphore(1)
         self.registry = registry or ToolContractRegistry.with_builtins()
         # The default is a real provider boundary, not a deterministic route
         # table.  Tests inject a contract-shaped planner explicitly.
         self.planner = planner or OpenAICompatiblePlanner.from_settings(registry=self.registry)
         self.queue = RuntimeQueue(runtime, lease_seconds=lease_seconds, registry=self.registry)
+
+    def preview_raster(self, artifact: dict) -> dict:
+        """Project an existing Artifact for display without creating a Run or Task."""
+        from .raster_preview import RasterPreviewBusy, TIMEOUT_SECONDS, read_raster_preview
+        from .upload_inspection import _crs_name
+
+        artifact_id = artifact["artifact_id"]
+        expected_crs = artifact.get("crs")
+        if artifact["type"] == "File":
+            schema = artifact.get("schema") or {}
+            if (schema.get("inspection") or {}).get("format") != "geotiff":
+                raise ValueError("只有经过检查的 GeoTIFF 和栅格成果支持预览")
+            declaration = (schema.get("file") or {}).get("declared_crs") or {}
+            if expected_crs is None and declaration.get("source") == "user":
+                expected_crs = declaration.get("value")
+        elif artifact["type"] != "Raster":
+            raise ValueError("此成果不支持栅格预览")
+
+        if not self._raster_preview_slot.acquire(blocking=False):
+            raise RasterPreviewBusy("栅格预览正在生成，请稍后重试")
+        lease = f"preview:{uuid.uuid4().hex}"
+        try:
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=TIMEOUT_SECONDS + 120)).isoformat()
+            try:
+                self.runtime.lease_artifact(artifact_id, lease, expires_at=expires_at, purpose="download", _validate_file=False)
+            except RuntimeError as exc:
+                raise RasterPreviewBusy("成果正在被其他操作读取，请稍后重试") from exc
+            try:
+                path = self.artifacts.path_for(artifact_id)
+                return {"artifact_id": artifact_id, **read_raster_preview(str(path), _crs_name(expected_crs))}
+            finally:
+                self.runtime.release_artifact_lease(lease)
+        finally:
+            self._raster_preview_slot.release()
 
     def enqueue_run(self, run_id: str) -> int:
         count = self.queue.enqueue_run(run_id)

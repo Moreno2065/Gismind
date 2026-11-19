@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getRuntimeArtifact, getRuntimeArtifactContent, runtimeArtifactContentUrl } from '@/api/client';
 import { projectRuntimeMapLayer, type RuntimeMapDisplay } from '@/lib/runtimeMapProjection';
 import type { ArtifactSummary, RunTaskProjection } from '@/types/runtime';
+import { ArtifactRasterMap } from './ArtifactRasterMap';
 import { LazyMapView } from './LazyMapView';
 import { runtimeTaskAnchor } from './TaskExecutionDetails';
 
@@ -25,11 +26,10 @@ interface LoadedArtifact {
 interface Preview {
   map?: RuntimeMapDisplay;
   rows: JsonObject[];
-  total: number;
   note?: string;
 }
 
-const PREVIEW_LIMIT = 100;
+const ROWS_PER_PAGE = 100;
 const JSON_PREVIEW_TYPES = new Set(['Vector', 'MapLayer', 'Table', 'POISet', 'Coordinate']);
 
 function object(value: unknown): JsonObject | undefined {
@@ -99,18 +99,15 @@ function vectorEnvelope(content: JsonObject, crs: unknown): JsonObject {
 }
 
 function previewFor(artifact: ArtifactSummary, content: unknown): Preview {
-  const result: Preview = { rows: [], total: 0 };
-  if (artifact.type === 'Raster') return { ...result, note: '可下载 GeoTIFF，尚无浏览器栅格预览' };
+  const result: Preview = { rows: [] };
   if (content === undefined) return result;
   const value = object(content);
   const features = value?.type === 'FeatureCollection' && Array.isArray(value.features) ? value.features : undefined;
   if (features) {
-    result.total = features.length;
-    result.rows = features.slice(0, PREVIEW_LIMIT).map(feature => object(object(feature)?.properties) ?? {});
+    result.rows = features.map(feature => object(object(feature)?.properties) ?? {});
   } else if (artifact.type === 'Table') {
     const rows = Array.isArray(content) ? content : Array.isArray(value?.rows) ? value.rows : [];
-    result.total = rows.length;
-    result.rows = rows.slice(0, PREVIEW_LIMIT).map(row => object(row) ?? { value: row });
+    result.rows = rows.map(row => object(row) ?? { value: row });
   }
   try {
     if (artifact.type === 'MapLayer') {
@@ -118,8 +115,7 @@ function previewFor(artifact: ArtifactSummary, content: unknown): Preview {
       for (const layer of Array.isArray(value?.layers) ? value.layers : []) {
         const collection = object(layer);
         if (collection?.type !== 'FeatureCollection' || !Array.isArray(collection.features)) continue;
-        result.total += collection.features.length;
-        result.rows.push(...collection.features.slice(0, PREVIEW_LIMIT - result.rows.length).map(feature => object(object(feature)?.properties) ?? {}));
+        for (const feature of collection.features) result.rows.push(object(object(feature)?.properties) ?? {});
       }
     } else if (artifact.type === 'Vector') {
       if (!features) result.note = '此成果不是可预览的 GeoJSON FeatureCollection，请下载查看。';
@@ -171,6 +167,12 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferre
   const fields = selected ? schemaFields(selected) : [];
   const producer = tasks.find(task => task.task_id === selected?.producer_task_id);
   const isLoading = Boolean(currentId && (!current || current.loading));
+  const raster = selected?.type === 'Raster' || (selected?.type === 'File' && object(selected.schema?.inspection)?.format === 'geotiff');
+  const name = selected ? artifactName(selected) : '';
+  const jsonTable = selected?.type === 'Table' && canReadJson(selected);
+  let downloadName: string | true = true;
+  if (raster) downloadName = /\.tiff?$/i.test(name) ? name : `${name}.tif`;
+  if (jsonTable) downloadName = /\.json$/i.test(name) ? name : `${name}.json`;
 
   if (!selected) return <section className="flex min-h-[380px] flex-1 flex-col items-center justify-center px-6 py-12 text-center" aria-label="成果工作区">
     <ContourMark />
@@ -216,18 +218,19 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferre
 
       {!isLoading && !current?.error && <div>
         <div className="flex items-center justify-between"><h4 className="font-mono text-[10px] tracking-wider text-ink-400">空间预览</h4>{preview?.map && <span className="text-[10px] text-ink-500">地图显示副本 · GCJ02</span>}</div>
+        {raster && <ArtifactRasterMap key={selected.artifact_id} artifactId={selected.artifact_id} />}
         {preview?.map && <LazyMapView key={selected.artifact_id} layers={preview.map.layers} bbox={preview.map.bbox} sourceArtifactId={selected.artifact_id} />}
         {preview?.note && <div className="mt-3 flex items-start gap-3 border border-ink-700/80 bg-ink-900/40 px-4 py-5"><svg aria-hidden="true" className="mt-0.5 shrink-0 text-ink-500" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="3" y="3" width="18" height="18" rx="1" /><path d="M3 9h18M9 3v18M15 3v18M3 15h18" /></svg><p className="text-xs leading-6 text-ink-400">{preview.note}</p></div>}
-        {!preview?.map && !preview?.note && !preview?.rows.length && <p className="mt-3 border border-ink-700/70 px-4 py-5 text-xs leading-6 text-ink-400">此格式暂不支持浏览器预览，可下载原始成果。</p>}
+        {!raster && !preview?.map && !preview?.note && !preview?.rows.length && <p className="mt-3 border border-ink-700/70 px-4 py-5 text-xs leading-6 text-ink-400">此格式暂不支持浏览器预览，可下载原始成果。</p>}
       </div>}
 
       {Boolean(fields.length) && <div><div className="mb-2.5 flex items-center gap-2"><h4 className="text-xs text-ink-400">数据字段</h4><span className="font-mono text-[10px] text-ink-500">{fields.length}</span></div><div className="flex flex-wrap gap-1.5">{fields.map(([name, type]) => <span key={name} className="max-w-full break-all border border-ink-700/80 bg-ink-900/30 px-2 py-1 font-mono text-[10px] leading-5"><span className="text-ink-300">{name}</span>{type && <span className="ml-2 text-ink-500">{type}</span>}</span>)}</div></div>}
 
-      {preview && preview.rows.length > 0 && <AttributeTable preview={preview} />}
+      {preview && preview.rows.length > 0 && <AttributeTable key={selected.artifact_id} rows={preview.rows} />}
 
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-700/75 pt-4">
         <span className="font-mono text-[9px] tracking-wide text-ink-500">原始数据与坐标系保持不变</span>
-        <a href={runtimeArtifactContentUrl(selected)} download className="inline-flex min-h-9 items-center gap-2 text-xs text-ink-300 underline decoration-ink-600 underline-offset-4 transition-colors hover:text-amber focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.25"><path d="M10 2v10M6 8l4 4 4-4M3 13v4h14v-4" /></svg>下载原始成果</a>
+        <a href={runtimeArtifactContentUrl(selected)} download={downloadName} className="inline-flex min-h-9 items-center gap-2 text-xs text-ink-300 underline decoration-ink-600 underline-offset-4 transition-colors hover:text-amber focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.25"><path d="M10 2v10M6 8l4 4 4-4M3 13v4h14v-4" /></svg>下载原始成果</a>
       </footer>
     </div>
   </section>;
@@ -237,9 +240,42 @@ function Metadata({ label, value, wide = false }: { label: string; value: string
   return <div className={`min-w-0 ${wide ? 'col-span-2' : ''}`}><dt className="mb-1.5 text-[10px] text-ink-500">{label}</dt><dd className="break-all font-mono text-[11px] leading-5 text-ink-300">{value}</dd></div>;
 }
 
-function AttributeTable({ preview }: { preview: Preview }) {
-  const columns = [...new Set(preview.rows.flatMap(row => Object.keys(row)))];
-  return <div className="min-w-0"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h4 className="text-xs text-ink-400">属性预览</h4><p className="font-mono text-[10px] text-ink-500">{preview.total > PREVIEW_LIMIT ? `仅显示前 ${PREVIEW_LIMIT} 条，共 ${preview.total} 条` : `${preview.total} 条记录`}</p></div><div className="max-h-72 overflow-auto border border-ink-700/80"><table aria-label="成果属性表" className="w-full border-collapse whitespace-nowrap text-left text-[11px]"><thead className="sticky top-0 bg-ink-800"><tr><th scope="col" className="border-b border-r border-ink-700 px-3 py-2.5 font-mono font-normal text-ink-500">#</th>{columns.map(column => <th scope="col" key={column} className="border-b border-ink-700 px-3 py-2.5 font-mono font-normal text-ink-300">{column}</th>)}</tr></thead><tbody>{preview.rows.map((row, index) => <tr key={index} className="border-b border-ink-700/50 last:border-0 even:bg-ink-900/40 hover:bg-amber/5"><th scope="row" className="border-r border-ink-700/60 px-3 py-2 font-mono font-normal tabular-nums text-ink-500">{index + 1}</th>{columns.map(column => <td key={column} className="max-w-56 truncate px-3 py-2 text-ink-300" title={text(row[column])}>{text(row[column])}</td>)}</tr>)}</tbody></table></div></div>;
+function AttributeTable({ rows }: { rows: JsonObject[] }) {
+  const [page, setPage] = useState(0);
+  const columns = useMemo(() => [...new Set(rows.flatMap(Object.keys))], [rows]);
+  const lastPage = Math.ceil(rows.length / ROWS_PER_PAGE) - 1;
+  const currentPage = Math.min(page, lastPage);
+  const start = currentPage * ROWS_PER_PAGE;
+  const end = Math.min(start + ROWS_PER_PAGE, rows.length);
+
+  return <div className="min-w-0">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h4 className="text-xs text-ink-400">属性预览</h4>
+      <p aria-live="polite" className="font-mono text-[10px] text-ink-500">
+        {lastPage > 0 ? `第 ${start + 1}–${end} 条，共 ${rows.length} 条` : `${rows.length} 条记录`}
+      </p>
+    </div>
+    <div className="max-h-72 overflow-auto border border-ink-700/80">
+      <table aria-label="成果属性表" className="w-full border-collapse whitespace-nowrap text-left text-[11px]">
+        <thead className="sticky top-0 bg-ink-800"><tr>
+          <th scope="col" className="border-b border-r border-ink-700 px-3 py-2.5 font-mono text-ink-500">#</th>
+          {columns.map(column => <th key={column} scope="col" className="border-b border-ink-700 px-3 py-2.5 font-mono font-normal text-ink-300">{column}</th>)}
+        </tr></thead>
+        <tbody>{rows.slice(start, end).map((row, index) => <tr key={start + index} className="border-b border-ink-700/60 last:border-0 even:bg-ink-900/40 hover:bg-amber/5">
+          <th scope="row" className="border-r border-ink-700/60 px-3 py-2 font-mono font-normal tabular-nums text-ink-500">{start + index + 1}</th>
+          {columns.map(column => <td key={column} className="max-w-56 truncate px-3 py-2 text-ink-300" title={text(row[column])}>{text(row[column])}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>
+    {lastPage > 0 && <nav aria-label="属性表分页" className="mt-2 flex justify-end gap-2">
+      {[{ label: '上一页', step: -1, disabled: currentPage === 0 }, { label: '下一页', step: 1, disabled: currentPage === lastPage }].map(action =>
+        <button key={action.label} type="button" disabled={action.disabled} onClick={() => setPage(currentPage + action.step)}
+          className="min-h-8 rounded-md border border-ink-600 px-2.5 text-xs text-ink-200 hover:border-amber focus-visible:outline focus-visible:outline-amber disabled:opacity-40">
+          {action.label}
+        </button>
+      )}
+    </nav>}
+  </div>;
 }
 
 /** Decorative contours describe the workspace, never an actual dataset. */

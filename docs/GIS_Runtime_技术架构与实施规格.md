@@ -1457,6 +1457,11 @@ V1 的 `confirmation` 是常量 `true`，不接受 `false`；用户不批准时�
 
 - `GET /api/artifacts/{artifact_id}`：返回元数据、schema、CRS、producer 与血缘。
 - `GET /api/artifacts/{artifact_id}/content`：返回载荷，支持 `ETag` 和 File/Raster 的 HTTP Range。
+- 通过 `GET /api/artifacts/{artifact_id}/raster-preview` 查看可见的 Raster 成果或已检查的 GeoTIFF 上传。Runtime Supervisor 对 Artifact 加临时租约，由受限子进程读取，单次只处理一个预览。响应以 WGS84 经纬度提供 `bbox`，包含最长边至多 512 像素的透明 PNG、第 1 波段、原波段数、NoData 声明和预览采样值域。无效像元和重投影后的覆盖范围外均透明。失败可以重试，原生 GeoTIFF 继续通过 `/content` 下载。
+
+DEM 试点使用 `io.load_raster`、`io.load_vector` 和 `raster.clip_mask`，GeoTIFF 继续保存原物理 CRS、裁剪网格及有效像元值。裁剪保留源文件内部掩膜和 RGBA 的透明度语义。对没有 NoData 或透明通道且存在无效像元的栅格，裁剪结果用 GeoTIFF 内部掩膜记录无效像元，避免把它们当成有效的零高程。成果区用独立的 WGS84 坐标图框显示预览。可以上传 DEM 和边界后输入「用上传的矢量边界掩膜裁剪 DEM，交付裁剪后的原生 GeoTIFF」。
+
+工作台可根据本轮已上传或选中的数据展示可编辑的工作流示例。一份有 CRS 的矢量对应逐要素缓冲区。一份有 CRS 的栅格和一份有 CRS 的面矢量对应掩膜裁剪和分区统计。点击示例把需求填入编辑器，发送仍使用本轮明确选择的 Artifact ID 进入 Runtime。已加载的 JSON 矢量、地图和表格成果按每页 100 行浏览属性，地图和下载使用完整成果。JSON 表格下载使用 `.json` 文件名。
 - 无效或不存在时分别返回 `ARTIFACT_INVALID`、`ARTIFACT_NOT_FOUND`。V1 是单用户本地 Runtime，不伪装尚不存在的多用户授权模型。
 
 元数据响应示例：

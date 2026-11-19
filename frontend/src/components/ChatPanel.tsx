@@ -6,6 +6,7 @@ import { useScrollAnchor } from '@/hooks/useScrollAnchor';
 import { countFeatures } from '@/lib/utils';
 import { projectRuntimeMapLayer } from '@/lib/runtimeMapProjection';
 import { mergeMessageHistory } from '@/lib/mergeMessageHistory';
+import { runtimeWorkflowExamples } from '@/lib/runtimeWorkflowExamples';
 import type { ChatMessage, MessageBlock } from '@/types/message';
 import type { ArtifactSummary, CreateRunRequest, PendingConfirmation, RunCommandResponse, RunProjectionState } from '@/types/runtime';
 import { MessageBubble } from './MessageBubble';
@@ -290,6 +291,9 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
 
   const hasMessages = messages.length > 0;
   const visibleArtifacts = mergeArtifacts(artifacts, pendingUploads.flatMap((upload) => upload.artifact ? [upload.artifact] : []));
+  const examples = isRunning || awaitingInput || uploadsBlocked || input.trim() ? [] : runtimeWorkflowExamples([
+    ...pendingUploads.flatMap(upload => upload.artifact ? [upload.artifact] : []), ...selectedInputs,
+  ]);
   const finalProjection = lastProjection?.status === 'completed' ? lastProjection : null;
   const finalArtifacts = finalProjection?.output_artifacts.filter(artifact => finalProjection.final_artifact_ids?.includes(artifact.artifact_id)) ?? [];
   const preferredArtifact = finalArtifacts.find(artifact => artifact.type === 'MapLayer')
@@ -324,6 +328,13 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
       {confirmations.map((confirmation) => <div key={confirmation.confirmation_id} className="mb-2 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm text-ink-200"><p>{confirmation.action_summary ?? '任务 ' + confirmation.task_key + ' 需要你的确认后才能执行。'}</p><button type="button" disabled={submitting} onClick={() => confirm(confirmation)} className="mt-2 rounded bg-amber px-3 py-1 text-ink-950 disabled:opacity-50">确认执行 {confirmation.task_key}</button></div>)}
       <UploadTray uploads={pendingUploads} disabled={submitting} onRetry={(file, declaration) => void uploadFile(file, declaration)} onRemove={(file) => setPendingUploads((current) => current.filter((upload) => upload.file !== file))} />
       {selectedInputs.length > 0 && <div aria-label="本轮选用的成果" className="mb-2 flex flex-wrap gap-2">{selectedInputs.map((artifact) => <span key={artifact.artifact_id} className="max-w-full rounded border border-amber/30 bg-amber/10 px-2 py-1 text-xs text-amber"><span className="break-all">{artifact.type} · {artifact.artifact_id}</span><button type="button" disabled={submitting} aria-label={'取消选用 ' + artifact.artifact_id} onClick={() => setSelectedInputs(current => current.filter(item => item.artifact_id !== artifact.artifact_id))} className="ml-2">×</button></span>)}</div>}
+      {examples.length > 0 && <div role="group" aria-label="工作流示例" className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-ink-400">工作流示例</span>
+        {examples.map(example => <button key={example.title} type="button" onClick={() => setInput(example.prompt)}
+          className="min-h-8 rounded-md border border-ink-600 px-2.5 text-xs text-ink-200 hover:border-amber hover:text-amber focus-visible:outline focus-visible:outline-amber">
+          {example.title}
+        </button>)}
+      </div>}
       <div className="composer-field flex items-end gap-2 rounded-xl border border-ink-600 bg-ink-800 px-3 py-2">
         <button type="button" onClick={() => fileInputRef.current?.click()} className="h-9 text-ink-400 hover:text-amber" aria-label="上传文件">＋</button>
         <input ref={fileInputRef} className="hidden" type="file" multiple onChange={(event) => { if (event.target.files?.length) void upload(event.target.files); event.target.value = ''; }} />

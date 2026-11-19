@@ -183,6 +183,30 @@ describe('Create Run idempotency', () => {
 });
 
 describe('Upload interactions', () => {
+  it('offers workflow examples from verified attachments and fills an editable prompt without submitting', async () => {
+    const files = [new File(['dem'], 'elevation.tif'), new File(['boundary'], 'boundary.geojson')];
+    const inspected = [
+      { format: 'geotiff', artifact_type: 'Raster', crs_status: 'present' },
+      { format: 'geojson', artifact_type: 'Vector', crs_status: 'present', geometry_types: ['Polygon'] },
+    ];
+    let uploaded = 0;
+    uploadResponse = async () => {
+      const index = uploaded++;
+      return json({ artifact_id: `example-${index}`, type: 'File', crs: { kind: 'EPSG', code: 4326 }, schema: { inspection: inspected[index] } });
+    };
+    const view = render(<ChatPanel sessionId="s" />);
+    expect(screen.queryByRole('button', { name: '按边界裁剪栅格' })).toBeNull();
+    fireEvent.change(view.container.querySelector('input[type=file]')!, { target: { files } });
+    const clip = await screen.findByRole('button', { name: '按边界裁剪栅格' });
+    expect(screen.getByRole('button', { name: '按面分区统计' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '300 米缓冲区' })).toBeNull();
+    fireEvent.click(clip);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toContain('原生 GeoTIFF');
+    expect(requests.some(item => item.url === 'POST /api/runs')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(requests.find(item => item.url === 'POST /api/runs')?.body.input_artifact_ids).toEqual(['example-0', 'example-1']));
+  });
+
   async function composer() {
     const view = render(<ChatPanel sessionId="s" />);
     await screen.findByRole('button', { name: '发送' });

@@ -681,6 +681,22 @@ def get_artifact(request: Request, artifact_id: str):
     return _public_artifact(artifact)
 
 
+@router.get("/artifacts/{artifact_id}/raster-preview")
+def get_raster_preview(request: Request, artifact_id: str):
+    from app.runtime.raster_preview import RasterPreviewBusy
+
+    runtime, _artifacts, supervisor = _resources(request)
+    artifact = _artifact_visible(runtime, artifact_id)
+    if artifact is None:
+        return _error(request, 404, "ARTIFACT_NOT_FOUND", "artifact does not exist or is not owned")
+    try:
+        return supervisor.preview_raster(artifact)
+    except RasterPreviewBusy as exc:
+        return _error(request, 503, "RASTER_PREVIEW_BUSY", str(exc))
+    except ValueError as exc:
+        return _error(request, 422, "RASTER_PREVIEW_UNAVAILABLE", str(exc))
+
+
 @router.get("/artifacts/{artifact_id}/content")
 def get_artifact_content(request: Request, artifact_id: str,
                          range_header: str | None = Header(default=None, alias="Range"),
