@@ -130,11 +130,20 @@ def vector_source(path: Path, format_name: str, *, max_total=500 * 1024 * 1024, 
                 if stem + extension not in files:
                     raise ValueError(f"Shapefile ZIP 缺少配套文件 {extension}")
             with zipfile.ZipFile(path) as archive:
+                extracted_total = 0
                 for extension in (".shp", ".shx", ".dbf", ".prj", ".cpg"):
                     member = files.get(stem + extension)
                     if member is not None:
-                        with archive.open(member) as source, (root / ("layer" + extension)).open("wb") as destination:
-                            shutil.copyfileobj(source, destination)
+                        target_file = root / ("layer" + extension)
+                        with archive.open(member) as source, target_file.open("wb") as destination:
+                            while True:
+                                chunk = source.read(65536)
+                                if not chunk:
+                                    break
+                                extracted_total += len(chunk)
+                                if extracted_total > max_total:
+                                    raise ValueError("ZIP uncompressed size exceeds configured limit")
+                                destination.write(chunk)
             yield root / "layer.shp"
         else:
             extension = {"geojson": ".geojson", "gpkg": ".gpkg", "kml": ".kml"}[format_name]

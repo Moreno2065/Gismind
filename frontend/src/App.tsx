@@ -98,9 +98,9 @@ export default function App() {
             loading={sessionsApi.loading}
             error={sessionsApi.error}
             onActivate={(id) => { sessionsApi.activate(id); if (narrow) closeSidebar(); }}
-            onRename={sessionsApi.rename}
-            onDelete={sessionsApi.remove}
-            onCreate={() => { void sessionsApi.create(); if (narrow) closeSidebar(); }}
+            onRename={(id, title) => { void sessionsApi.rename(id, title).catch(() => { /* error surfaced via sessionsApi.error */ }); }}
+            onDelete={(id) => { void sessionsApi.remove(id).catch(() => { /* error surfaced via sessionsApi.error */ }); }}
+            onCreate={() => { void sessionsApi.create().catch(() => { /* error surfaced via sessionsApi.error */ }); if (narrow) closeSidebar(); }}
           />
         </ErrorBoundary>
 
@@ -196,6 +196,7 @@ function HealthPill({ health }: { health: HealthResponse | null }) {
     );
   }
   const ok = health.status === 'ok';
+  const checksSummary = health.checks ? ' · ' + JSON.stringify(health.checks) : '';
   return (
     <div
       role="status"
@@ -203,7 +204,7 @@ function HealthPill({ health }: { health: HealthResponse | null }) {
       className={`flex h-7 w-7 shrink-0 items-center justify-center gap-2 rounded-full border sm:h-auto sm:w-auto sm:px-3 sm:py-1 ${
         ok ? 'border-signal-done/30 bg-signal-done/5' : 'border-signal-error/30 bg-signal-error/5'
       }`}
-      title={(ok ? '运行正常' : '服务受限') + ' · v' + health.version + ' · ' + JSON.stringify(health.checks)}
+      title={(ok ? '运行正常' : '服务受限') + ' · v' + health.version + checksSummary}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-signal-done' : 'bg-signal-error'}`} />
       <span className={`hidden whitespace-nowrap font-mono text-[10px] sm:inline ${ok ? 'text-signal-done' : 'text-signal-error'}`}>

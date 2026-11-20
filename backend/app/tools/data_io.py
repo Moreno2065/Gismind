@@ -832,29 +832,46 @@ class DataIO:
                 "message": f"INVALID_COORDINATE: {len(positions)} 行坐标缺失或不是有限数值，未生成任何点。",
                 "invalid_row_positions": positions,
             }
-        coordinate_crs = CRS.from_user_input(crs)
-        if coordinate_crs.is_geographic:
-            # pyproj expresses angular unit conversion in radians per unit.
-            # This also handles geographic systems using grads rather than degrees.
-            radians_per_unit = coordinate_crs.axis_info[0].unit_conversion_factor
-            longitude_limit = math.pi / radians_per_unit
-            latitude_limit = math.pi / (2 * radians_per_unit)
-            outside = (np.abs(x_values) > longitude_limit) | (np.abs(y_values) > latitude_limit)
+        is_gcj02 = isinstance(crs, str) and crs.strip().upper() == "GCJ02"
+        if is_gcj02:
+            # Explicit GCJ02 handling: never delegate GCJ02 to pyproj as an EPSG code.
+            outside = (np.abs(x_values) > 180.0) | (np.abs(y_values) > 90.0)
             if outside.any():
                 positions = np.flatnonzero(outside).tolist()
                 return {
                     "status": "error", "error_code": "COORDINATE_OUT_OF_RANGE",
-                    "message": f"COORDINATE_OUT_OF_RANGE: {len(positions)} 行坐标超出 {crs} 的经纬度范围，未生成任何点。",
+                    "message": f"COORDINATE_OUT_OF_RANGE: {len(positions)} 行坐标超出 GCJ02 的经纬度范围，未生成任何点。",
                     "invalid_row_positions": positions,
                 }
+            carrier_crs = "EPSG:4326"
+        else:
+            normalized_crs = "EPSG:4326" if isinstance(crs, str) and crs.strip().upper() == "WGS84" else crs
+            coordinate_crs = CRS.from_user_input(normalized_crs)
+            if coordinate_crs.is_geographic:
+                # pyproj expresses angular unit conversion in radians per unit.
+                # This also handles geographic systems using grads rather than degrees.
+                radians_per_unit = coordinate_crs.axis_info[0].unit_conversion_factor
+                longitude_limit = math.pi / radians_per_unit
+                latitude_limit = math.pi / (2 * radians_per_unit)
+                outside = (np.abs(x_values) > longitude_limit) | (np.abs(y_values) > latitude_limit)
+                if outside.any():
+                    positions = np.flatnonzero(outside).tolist()
+                    return {
+                        "status": "error", "error_code": "COORDINATE_OUT_OF_RANGE",
+                        "message": f"COORDINATE_OUT_OF_RANGE: {len(positions)} 行坐标超出 {crs} 的经纬度范围，未生成任何点。",
+                        "invalid_row_positions": positions,
+                    }
+            carrier_crs = normalized_crs
         geometries = [Point(float(x), float(y)) for x, y in zip(x_values, y_values)]
 
         gdf = gpd.GeoDataFrame(
             df.drop(columns=[x_field, y_field]),
             geometry=geometries,
-            crs=crs,
+            crs=carrier_crs,
         )
         geojson_dict = json.loads(gdf.to_json())
+        if is_gcj02:
+            geojson_dict["_crs_label"] = "GCJ02"
         return {
             "status": "success",
             "data": geojson_dict,

@@ -62,10 +62,10 @@ jobs:
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-ci.lock
       - name: Check dependency consistency
         run: python -m pip check
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         if: inputs.suite == 'browser'
         with:
-          node-version: '22'
+          node-version: '24.15.0'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install real browser prerequisites

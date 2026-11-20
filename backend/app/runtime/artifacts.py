@@ -18,8 +18,7 @@ from .store import RuntimeStore
 
 MIN_CONFIRM_GRACE_S = 86400
 MAX_CONFIRM_GRACE_S = 365 * 86400
-_CAS_LOCKS: dict[str, threading.Lock] = {}
-_CAS_LOCKS_GUARD = threading.Lock()
+_CAS_LOCK_STRIPES = tuple(threading.Lock() for _ in range(256))
 
 
 def _cas_uri(content_hash: str) -> str:
@@ -27,8 +26,11 @@ def _cas_uri(content_hash: str) -> str:
 
 
 def _cas_lock(content_hash: str) -> threading.Lock:
-    with _CAS_LOCKS_GUARD:
-        return _CAS_LOCKS.setdefault(content_hash, threading.Lock())
+    try:
+        index = int(content_hash[:8], 16) % len(_CAS_LOCK_STRIPES)
+    except ValueError:
+        index = hash(content_hash) % len(_CAS_LOCK_STRIPES)
+    return _CAS_LOCK_STRIPES[index]
 
 
 class ArtifactStore:
@@ -550,7 +552,8 @@ class ArtifactStore:
             path = self._under(self.artifacts_dir / "sha256" / artifact["content_hash"][:2] / artifact["content_hash"], self.artifacts_dir)
             if not path.is_file() or path.stat().st_size != int(artifact["size_bytes"]):
                 return False
-            return hashlib.sha256(path.read_bytes()).hexdigest() == artifact["content_hash"]
+            with path.open("rb") as stream:
+                return hashlib.file_digest(stream, "sha256").hexdigest() == artifact["content_hash"]
         except (OSError, ValueError, KeyError, TypeError):
             return False
 

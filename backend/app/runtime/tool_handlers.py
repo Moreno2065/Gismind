@@ -377,8 +377,13 @@ def handle_vector_reproject(**kwargs):
     if gdf is None:
         return _result("error", message="需要 Vector Artifact")
     target = kwargs.get("target_crs")
-    if isinstance(target, dict) and target.get("kind") == "EPSG":
-        target = f"EPSG:{target['code']}"
+    if isinstance(target, dict):
+        if target.get("kind") == "EPSG":
+            target = f"EPSG:{target['code']}"
+        elif target.get("kind") == "WGS84":
+            target = "EPSG:4326"
+    elif isinstance(target, str) and target.strip().upper() == "WGS84":
+        target = "EPSG:4326"
     return _call(_ctx("vector.reproject", kwargs), "reproject_layer", gdf, target_crs=target, output_crs=_crs_name(target))
 
 
@@ -387,8 +392,13 @@ def handle_vector_reproject_many(**kwargs):
     if not isinstance(values, list):
         return _result("error", message="需要 Vector Artifact 列表")
     target = kwargs.get("target_crs")
-    if isinstance(target, dict) and target.get("kind") == "EPSG":
-        target = f"EPSG:{target['code']}"
+    if isinstance(target, dict):
+        if target.get("kind") == "EPSG":
+            target = f"EPSG:{target['code']}"
+        elif target.get("kind") == "WGS84":
+            target = "EPSG:4326"
+    elif isinstance(target, str) and target.strip().upper() == "WGS84":
+        target = "EPSG:4326"
     outputs = []
     for item in values:
         result = handle_vector_reproject(vector=item, target_crs=target)
@@ -502,10 +512,15 @@ def _code_artifact_inputs(value: Any, declarations: Any) -> dict[str, dict[str, 
         raise ValueError("declared input names must be unique")
     resolved: dict[str, dict[str, Any]] = {}
     for name, artifact in zip(names, supplied):
-        if not isinstance(artifact, dict) or not isinstance(artifact.get("data"), bytes):
+        if not isinstance(artifact, dict):
+            raise ValueError("code.execute only accepts resolved File Artifact bytes")
+        raw_bytes = artifact.get("raw_bytes")
+        if not isinstance(raw_bytes, bytes):
+            raw_bytes = artifact.get("data")
+        if not isinstance(raw_bytes, bytes):
             raise ValueError("code.execute only accepts resolved File Artifact bytes")
         resolved[name] = {
-            "data": artifact["data"],
+            "data": raw_bytes,
             "artifact_id": artifact.get("artifact_id"),
             "content_hash": artifact.get("content_hash"),
             "media_type": artifact.get("media_type"),
@@ -750,7 +765,7 @@ _RASTER_METHODS = {
 }
 
 PUBLIC_OPERATIONS = frozenset({
-    "geo.geocode", "geo.transform", "poi.search", "vector.buffer", "vector.overlay", "vector.voronoi",
+    "geo.geocode", "geo.transform", "coordinate.convert", "poi.search", "vector.buffer", "vector.overlay", "vector.voronoi",
     "vector.isochrone", "vector.clip", "vector.dissolve", "vector.merge", "vector.join_location",
     "vector.join_nearest", "vector.count_points", "vector.extract_location", "vector.convex_hull",
     "vector.bounding_boxes", "vector.centroid", "vector.point_on_surface", "vector.simplify",

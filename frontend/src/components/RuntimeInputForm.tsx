@@ -88,7 +88,7 @@ export function RuntimeInputForm({ schema, disabled, onSubmit }: { schema: Recor
           })}
         </select> : type === 'boolean' ? <select {...control}>
           <option value="">请选择</option><option value="true">是</option><option value="false">否</option>
-        </select> : type === 'object' || type === 'array' ? <textarea {...control} rows={4} spellCheck={false} placeholder={type === 'object' ? 'JSON 对象，例如 {"epsg":4326}' : 'JSON 数组，例如 ["a", "b"]'} />
+        </select> : type === 'object' || type === 'array' ? <textarea {...control} rows={4} spellCheck={false} placeholder={type === 'object' ? 'JSON 对象，例如 {"kind":"EPSG","code":4326}' : 'JSON 数组，例如 ["a", "b"]'} />
           : <input {...control} type={type === 'number' || type === 'integer' ? 'number' : 'text'}
             min={field.minimum} max={field.maximum} step={type === 'integer' ? 1 : type === 'number' ? 'any' : undefined}
             minLength={field.minLength} maxLength={field.maxLength} />}

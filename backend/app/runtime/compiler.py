@@ -688,8 +688,12 @@ class Compiler:
                 raise CompileError("INVALID_PARAMETER", f"{path}.{name}", "parameter exceeds the maximum length")
             if "minimum" in rule and value < rule["minimum"]:
                 raise CompileError("INVALID_PARAMETER", f"{path}.{name}", "parameter is below minimum")
+            if "exclusiveMinimum" in rule and value <= rule["exclusiveMinimum"]:
+                raise CompileError("INVALID_PARAMETER", f"{path}.{name}", "parameter must be greater than minimum")
             if "maximum" in rule and value > rule["maximum"]:
                 raise CompileError("INVALID_PARAMETER", f"{path}.{name}", "parameter exceeds maximum")
+            if "exclusiveMaximum" in rule and value >= rule["exclusiveMaximum"]:
+                raise CompileError("INVALID_PARAMETER", f"{path}.{name}", "parameter must be less than maximum")
         # Apply the same strict checks recursively to object/array schemas.
         for name, rule in properties.items():
             rule_type = rule.get("type") if isinstance(rule, dict) else None
@@ -722,7 +726,11 @@ class Compiler:
             tree = ast.parse(source, mode="exec")
         except (SyntaxError, ValueError, TypeError) as exc:
             raise CompileError("INVALID_PARAMETER", path, "source_code is not valid Python") from exc
-        banned_names = {"socket", "tool_fns", "callable", "rpc", "eval", "exec", "compile", "__import__"}
+        banned_names = {
+            "socket", "tool_fns", "callable", "rpc", "eval", "exec", "compile", "__import__",
+            "open", "getattr", "setattr", "delattr", "globals", "locals", "vars",
+            "breakpoint", "input", "sitecustomize_gismind",
+        }
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 raise CompileError("INVALID_PARAMETER", path, "source_code imports are not allowed")
@@ -834,8 +842,12 @@ class Compiler:
         try:
             if "minimum" in rule and value < rule["minimum"]:
                 raise CompileError("INVALID_PARAMETER", path, "parameter is below minimum")
+            if "exclusiveMinimum" in rule and value <= rule["exclusiveMinimum"]:
+                raise CompileError("INVALID_PARAMETER", path, "parameter must be greater than minimum")
             if "maximum" in rule and value > rule["maximum"]:
                 raise CompileError("INVALID_PARAMETER", path, "parameter exceeds maximum")
+            if "exclusiveMaximum" in rule and value >= rule["exclusiveMaximum"]:
+                raise CompileError("INVALID_PARAMETER", path, "parameter must be less than maximum")
         except TypeError as exc:
             raise CompileError("INVALID_PARAMETER", path, "parameter constraint comparison is invalid") from exc
         return value

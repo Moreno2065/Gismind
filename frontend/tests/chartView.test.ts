@@ -60,7 +60,7 @@ it('keeps other ECharts series and components available before a chart mounts', 
       dataZoom: [{ type: 'inside' }],
       series: [{ type: 'scatter', data: [[1, 2]] }],
     });
-    expect(chart.getModel().getSeriesByIndex(0)).toBeDefined();
+    expect((chart as unknown as { getModel(): { getSeriesByIndex(index: number): unknown } }).getModel().getSeriesByIndex(0)).toBeDefined();
     expect(chart.getZr().storage.getDisplayList(true).length).toBeGreaterThan(0);
   } finally {
     chart.dispose();

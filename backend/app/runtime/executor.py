@@ -217,7 +217,7 @@ class RuntimeExecutor:
             data: Any = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             data = raw
-        return {**metadata, "path": str(path), "data": data}
+        return {**metadata, "path": str(path), "data": data, "raw_bytes": raw}
 
     def _resolve_input(self, value: Any, run_id: str | None = None, plan_id: str | None = None) -> Any:
         if isinstance(value, ArtifactRef):
@@ -434,7 +434,7 @@ class RuntimeExecutor:
             return
         if label == "GCJ02":
             raise ValueError("Vector payload declares GCJ02 coordinates under a physical CRS metadata")
-        if expected and physical and str(physical).upper().replace(" ", "") not in {expected.upper().replace(" ", ""), expected.upper().replace("EPSG:", "EPSG:")}:
+        if expected and physical and str(physical).upper().replace(" ", "") != expected.upper().replace(" ", ""):
             raise ValueError("Vector payload physical CRS does not match declared CRS metadata")
 
     @staticmethod
@@ -523,7 +523,14 @@ class RuntimeExecutor:
         if status not in {"success", "ok"} and not empty_allowed:
             message = str((result.get("message") if isinstance(result, dict) else getattr(result, "message", None)) or status)
             code = execution_error_code(result, "TASK_EMPTY" if status == "empty" else "TOOL_EXECUTION_FAILED")
-            self._mark_failed(task_id, run_id, event_type="task.empty" if status == "empty" else "task.failed", message=message, error_code=code, claim=claim)
+            defer_to_retry = False
+            if claim is not None and compiled.idempotent and code in set(compiled.retry_policy.retryable_error_codes):
+                attempt_count = self.runtime._read(
+                    lambda c: c.execute("SELECT COUNT(*) FROM task_attempts WHERE task_id=?", (task_id,)).fetchone()[0]
+                )
+                defer_to_retry = int(attempt_count) < int(compiled.retry_policy.max_attempts)
+            if not defer_to_retry:
+                self._mark_failed(task_id, run_id, event_type="task.empty" if status == "empty" else "task.failed", message=message, error_code=code, claim=claim)
             raise TaskExecutionError(code, f"task result is {status}: {message}")
         data = self._result_data(result)
         if self._result_is_empty(data, compiled.outputs) and contract.empty_policy != "allow":

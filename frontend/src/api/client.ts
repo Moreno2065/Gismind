@@ -22,11 +22,11 @@ import type {
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 
 // ---------------------------------------------------------------------------
-// X-User-Id — 临时认证方案，与后端 _get_user_id() 对齐
+// X-User-Id — 本地客户端标识请求头（生产环境应替换为正式认证凭据）
 // ---------------------------------------------------------------------------
 const USER_ID_KEY = 'gismind.user_id';
 
-/** 获取或生成持久化用户 ID（临时方案，生产应替换为 JWT / OAuth2）。 */
+/** 获取或生成持久化客户端用户 ID（本地单机方案，生产应替换为 JWT / OAuth2）。 */
 export function getUserId(): string {
   try {
     let id = localStorage.getItem(USER_ID_KEY);
@@ -48,7 +48,7 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
 export interface HealthResponse {
   status: 'ok' | 'degraded';
   version: string;
-  checks: Record<string, string>;
+  checks?: Record<string, unknown>;
 }
 
 /** 健康检查 */
@@ -219,19 +219,38 @@ export function clearActiveSessionId(): void {
 }
 
 export class RuntimeApiError extends Error {
-  constructor(public readonly code: string, public readonly status: number, message: string) {
+  constructor(
+    public readonly code: string,
+    public readonly status: number,
+    message: string,
+    public readonly details?: Record<string, unknown>,
+    public readonly trace_id?: string,
+  ) {
     super(`${code}: ${message}`);
     this.name = 'RuntimeApiError';
   }
 }
 
-/** 解析错误响应 envelope，保留可恢复的协议错误代码。 */
+/** 解析错误响应 envelope，保留可恢复的协议错误代码、details 与 trace_id。 */
 async function readError(res: Response, fallback: string): Promise<never> {
   const payload = await res.json().catch(() => ({}));
-  const err = (payload as { error?: { message?: string } }).error;
+  const err = (payload as {
+    error?: {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
+      trace_id?: string;
+    };
+  }).error;
   const msg = err?.message ?? `HTTP ${res.status}`;
-  const code = (err as { code?: string } | undefined)?.code;
-  if (code) throw new RuntimeApiError(code, res.status, msg);
+  const code = err?.code;
+  if (code) {
+    const details = err?.details && typeof err.details === 'object' && !Array.isArray(err.details)
+      ? err.details
+      : undefined;
+    const traceId = typeof err?.trace_id === 'string' ? err.trace_id : undefined;
+    throw new RuntimeApiError(code, res.status, msg, details, traceId);
+  }
   throw new Error(`${fallback}: ${msg}`);
 }
 

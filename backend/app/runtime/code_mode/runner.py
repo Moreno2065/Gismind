@@ -57,6 +57,57 @@ def _classify_sandbox_error(
     return None
 
 
+_SANDBOX_ENV_ALLOWLIST = (
+    "PATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "PATHEXT",
+    "PYTHONHOME",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "LC_ALL",
+    "LANG",
+    "HOME",
+    "USERPROFILE",
+)
+
+
+def _sandbox_kernel32():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel32.ResumeThread.restype = wintypes.DWORD
+    return kernel32
+
+
+def _build_sandbox_env(sandbox_dir: str, env_overrides: Optional[dict] = None) -> dict[str, str]:
+    import os
+
+    env: dict[str, str] = {}
+    for key in _SANDBOX_ENV_ALLOWLIST:
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    env["PYTHONPATH"] = sandbox_dir
+    env["APP_SANDBOX_NETWORK_ALLOWLIST"] = settings.APP_SANDBOX_NETWORK_ALLOWLIST
+    if env_overrides:
+        for k, v in env_overrides.items():
+            env[str(k)] = str(v)
+    return env
+
+
 def run_in_sandbox(
     code: str,
     *,
@@ -64,25 +115,19 @@ def run_in_sandbox(
     memory_mb: Optional[int] = None,
     sandbox_dir: Optional[str] = None,
     env_overrides: Optional[dict] = None,
+    payload_inputs: Optional[dict] = None,
 ) -> SandboxResult:
     """在隔离子进程跑 code, 限制资源与网络.
 
     Subprocess 使用 PYTHONPATH 加载 sitecustomize_gismind.py (黑名单),
-    用 pywin32 Job Object (Windows) 限 memory_mb, 用 Popen.wait(timeout) 超时.
-
-    Windows: CreateProcess with CREATE_SUSPENDED (win32con) → Job Object assign →
-    ResumeThread on the primary thread handle (not the process handle).
-
-    Args:
-        code: Python code string
-        timeout_s: 墙钟超时秒数 (default 60, 硬上限 300)
-        memory_mb: 内存硬上限 MB (default 512, 硬上限 2048, Windows only)
-        sandbox_dir: 覆盖 sandbox 包路径 (默认自动探测)
-        env_overrides: 额外注入子进程的环境变量（如 session_vars 路径 / RPC 端口白名单）
-
-    Returns:
-        SandboxResult
+    用 pywin32 Job Object (Windows) 或 resource.setrlimit (Unix) 限 memory_mb,
+    用临时文件传递代码与输入（规避命令行长度上限），用 Popen.wait(timeout) 超时。
     """
+    import json
+    import os
+    import signal
+    import tempfile
+
     # 从 settings 兜底，仍允许调用方覆盖
     timeout_s = timeout_s if timeout_s is not None else settings.APP_SANDBOX_TIMEOUT_S
     memory_mb = memory_mb if memory_mb is not None else settings.APP_SANDBOX_MEMORY_MB
@@ -93,112 +138,132 @@ def run_in_sandbox(
     if sandbox_dir is None:
         sandbox_dir = str(Path(__file__).parent.resolve())
 
-    # 装配 code —— 第一行必须 import sitecustomize_gismind
-    wrapped_code = (
-        "import sys, base64, json\n"
-        "import sitecustomize_gismind\n"
-        f"exec({code!r})\n"
-    )
-    # 输出分隔标记 —— 也包含 base64 编码便于纯文本 stdout 传输
-    code_b64 = base64.b64encode(wrapped_code.encode()).decode()
+    env = _build_sandbox_env(sandbox_dir, env_overrides=env_overrides)
 
-    # 子进程最小 runner
-    runner = (
-        "import sys, base64, json\n"
-        f"code_b64 = {code_b64!r}\n"
-        "_code = base64.b64decode(code_b64).decode()\n"
-        "try:\n"
-        "    exec(compile(_code, '<sandbox>', 'exec'))\n"
-        "except SystemExit as _e:\n"
-        "    sys.exit(_e.code if _e.code is not None else 0)\n"
-        "except Exception as _e:\n"
-        "    import traceback\n"
-        "    traceback.print_exc()\n"
-        "    sys.exit(1)\n"
-    )
-
-    import os
-    env = os.environ.copy()
-    env["PYTHONPATH"] = sandbox_dir + os.pathsep + env.get("PYTHONPATH", "")
-    env["APP_SANDBOX_NETWORK_ALLOWLIST"] = settings.APP_SANDBOX_NETWORK_ALLOWLIST
-    if env_overrides:
-        env.update(env_overrides)
-
-    start = time.time()
-    argv = [sys.executable, "-S", "-c", runner]
-
-    # Windows: CreateProcess suspended → Job Object → ResumeThread(thread_handle)
-    # Non-Windows: plain Popen (no CREATE_SUSPENDED race window to close).
-    if sys.platform == "win32":
-        proc = _spawn_windows_suspended(argv, env)
-        _apply_job_object(proc, memory_mb)
-        _resume_windows_thread(proc)
-    else:
-        proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            text=True,
+    with tempfile.TemporaryDirectory(prefix="gismind-sandbox-") as workdir:
+        payload_path = Path(workdir) / "payload.json"
+        payload_path.write_text(
+            json.dumps(
+                {"code": code, "inputs": payload_inputs or {}},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
         )
-        _apply_job_object(proc, memory_mb)
 
-    try:
+        # 子进程最小 runner：先读入 payload 并构建干净 user_globals，再加载 sitecustomize_gismind
+        runner = (
+            "import builtins as _b, base64 as _b64, json as _json, sys as _sys, traceback as _tb\n"
+            f"with open({str(payload_path)!r}, 'r', encoding='utf-8') as _pf:\n"
+            "    _payload = _json.load(_pf)\n"
+            "_raw_inputs = _payload.get('inputs') or {}\n"
+            "_user_globals = {'__builtins__': _b}\n"
+            "if _raw_inputs:\n"
+            "    _user_globals['inputs'] = {n: _b64.b64decode(v['data_b64']) for n, v in _raw_inputs.items()}\n"
+            "    _user_globals['artifact_metadata'] = {n: {k: v[k] for k in ('artifact_id', 'content_hash', 'media_type', 'type')} for n, v in _raw_inputs.items()}\n"
+            "else:\n"
+            "    _user_globals['inputs'] = {}\n"
+            "    _user_globals['artifact_metadata'] = {}\n"
+            "_user_code = _payload['code']\n"
+            "del _payload, _raw_inputs, _pf\n"
+            "import sitecustomize_gismind as _sc\n"
+            "del _sc\n"
+            "try:\n"
+            "    exec(compile(_user_code, '<sandbox>', 'exec'), _user_globals)\n"
+            "except SystemExit as _e:\n"
+            "    _sys.exit(_e.code if _e.code is not None else 0)\n"
+            "except Exception:\n"
+            "    _tb.print_exc()\n"
+            "    _sys.exit(1)\n"
+        )
+
+        start = time.time()
+        argv = [sys.executable, "-S", "-c", runner]
+
+        # Windows: CreateProcess suspended → Job Object → ResumeThread(thread_handle)
+        # Non-Windows: Popen with start_new_session + resource limits.
+        if sys.platform == "win32":
+            proc = _spawn_windows_suspended(argv, env)
+            _apply_job_object(proc, memory_mb)
+            _resume_windows_thread(proc)
+        else:
+            def _unix_preexec():
+                try:
+                    import resource
+                    limit_bytes = int(memory_mb) * 1024 * 1024
+                    resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+                except Exception:
+                    pass
+
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+                start_new_session=True,
+                preexec_fn=_unix_preexec,
+            )
+            _apply_job_object(proc, memory_mb)
+
         try:
-            stdout, stderr = proc.communicate(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=3)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                if sys.platform != "win32":
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        proc.kill()
+                else:
+                    proc.kill()
+                proc.wait(timeout=3)
+                duration_ms = int((time.time() - start) * 1000)
+                try:
+                    from app.audit.sandbox_audit import record as _audit_record
+                    _audit_record(
+                        user_id=threading.current_thread().name or "sandbox",
+                        code=code,
+                        error_code="SANDBOX_TIMEOUT",
+                        duration_ms=duration_ms,
+                        returncode=proc.returncode,
+                    )
+                except Exception:
+                    pass
+                return SandboxResult(
+                    stdout="", stderr="timeout",
+                    returncode=-1,
+                    duration_ms=duration_ms,
+                    error_code="SANDBOX_TIMEOUT",
+                )
+
             duration_ms = int((time.time() - start) * 1000)
-            # Audit record (Phase 4)
+            error_code = _classify_sandbox_error(stdout or "", stderr or "", proc.returncode)
+
             try:
                 from app.audit.sandbox_audit import record as _audit_record
                 _audit_record(
                     user_id=threading.current_thread().name or "sandbox",
                     code=code,
-                    error_code="SANDBOX_TIMEOUT",
+                    error_code=error_code,
                     duration_ms=duration_ms,
                     returncode=proc.returncode,
                 )
             except Exception:
-                pass  # audit failure should not crash the sandbox
+                pass
+
             return SandboxResult(
-                stdout="", stderr="timeout",
-                returncode=-1,
-                duration_ms=duration_ms,
-                error_code="SANDBOX_TIMEOUT",
-            )
-
-        duration_ms = int((time.time() - start) * 1000)
-        error_code = _classify_sandbox_error(stdout or "", stderr or "", proc.returncode)
-
-        # Audit record (Phase 4)
-        try:
-            from app.audit.sandbox_audit import record as _audit_record
-            _audit_record(
-                user_id=threading.current_thread().name or "sandbox",
-                code=code,
-                error_code=error_code,
-                duration_ms=duration_ms,
+                stdout=(stdout or "").strip(),
+                stderr=(stderr or "").strip(),
                 returncode=proc.returncode,
+                duration_ms=duration_ms,
+                error_code=error_code,
             )
-        except Exception:
-            pass  # audit failure should not crash the sandbox
-
-        return SandboxResult(
-            stdout=(stdout or "").strip(),
-            stderr=(stderr or "").strip(),
-            returncode=proc.returncode,
-            duration_ms=duration_ms,
-            error_code=error_code,
-        )
-    finally:
-        # Drop Job Object after communicate/kill so KILL_ON_JOB_CLOSE was active
-        # for the full child lifetime, then release handles.
-        _close_job_handle(proc)
-        _close_thread_handle(proc)
-        _close_process_handle(proc)
+        finally:
+            _close_job_handle(proc)
+            _close_thread_handle(proc)
+            _close_process_handle(proc)
 
 
 def _build_extended_limit_info(win32job, memory_mb: int, job=None) -> dict:
@@ -249,10 +314,7 @@ def _close_job_handle(proc) -> None:
         win32api.CloseHandle(job)
     except Exception:
         try:
-            # Fallback if win32api unavailable: CloseHandle via kernel32
-            import ctypes
-
-            ctypes.windll.kernel32.CloseHandle(int(job))
+            _sandbox_kernel32().CloseHandle(int(job))
         except Exception:
             pass
     try:
@@ -272,9 +334,7 @@ def _close_thread_handle(proc) -> None:
         win32api.CloseHandle(th)
     except Exception:
         try:
-            import ctypes
-
-            ctypes.windll.kernel32.CloseHandle(int(th))
+            _sandbox_kernel32().CloseHandle(int(th))
         except Exception:
             pass
     try:
@@ -296,9 +356,7 @@ def _close_process_handle(proc) -> None:
         win32api.CloseHandle(ph)
     except Exception:
         try:
-            import ctypes
-
-            ctypes.windll.kernel32.CloseHandle(int(ph))
+            _sandbox_kernel32().CloseHandle(int(ph))
         except Exception:
             pass
     proc._handle = None  # type: ignore[attr-defined]
@@ -319,9 +377,7 @@ def _resume_windows_thread(proc) -> None:
     except Exception:
         # ctypes fallback with the same thread handle
         try:
-            import ctypes
-
-            prev = ctypes.windll.kernel32.ResumeThread(int(th))
+            prev = _sandbox_kernel32().ResumeThread(int(th))
             if prev == 0xFFFFFFFF:
                 raise OSError("ResumeThread failed via kernel32")
         except Exception:
@@ -548,9 +604,7 @@ class _WinProc:
                 win32api.TerminateProcess(self._handle, 1)
             except Exception:
                 try:
-                    import ctypes
-
-                    ctypes.windll.kernel32.TerminateProcess(int(self._handle), 1)
+                    _sandbox_kernel32().TerminateProcess(int(self._handle), 1)
                 except Exception:
                     pass
         if self.returncode is None:
@@ -580,9 +634,7 @@ def _apply_job_object(proc, memory_mb: int, cpu_weight: int = 1) -> None:
         # Prefer the process handle we already hold from CreateProcess.
         process_handle = getattr(proc, "_handle", None)
         if not process_handle:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
+            kernel32 = _sandbox_kernel32()
             PROCESS_SET_QUOTA = 0x0100
             PROCESS_TERMINATE = 0x0001
             PROCESS_SET_INFORMATION = 0x0200
@@ -636,8 +688,6 @@ def _apply_job_object(proc, memory_mb: int, cpu_weight: int = 1) -> None:
     finally:
         if opened_via_kernel32 and process_handle:
             try:
-                import ctypes
-
-                ctypes.windll.kernel32.CloseHandle(process_handle)
+                _sandbox_kernel32().CloseHandle(process_handle)
             except Exception:
                 pass

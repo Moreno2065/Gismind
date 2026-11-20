@@ -6,9 +6,9 @@ export interface SessionMeta {
   title: string;
   created_at: number;        // epoch ms
   updated_at: number;
-  message_count: number;
-  tool_count: number;
-  has_map: boolean;
+  message_count?: number;
+  tool_count?: number;
+  has_map?: boolean;
 }
 
 export interface SessionMessage {

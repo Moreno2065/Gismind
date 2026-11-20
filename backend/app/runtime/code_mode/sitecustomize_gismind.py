@@ -37,45 +37,49 @@ import traceback as _traceback_mod  # noqa: F401
 BLOCKED_IMPORTS = {
     "os", "subprocess", "shutil", "ctypes", "_ctypes",
     "multiprocessing", "pty", "fcntl", "resource",
+    "_socket", "sitecustomize_gismind", "importlib",
 }
+
+
+def _make_is_user_frame(getframe):
+    def _is_user_frame() -> bool:
+        try:
+            frame = getframe(2)
+            for _ in range(12):
+                if frame is None:
+                    break
+                fn = frame.f_code.co_filename or ""
+                if fn in ("<sandbox>", "<string>") or fn.endswith(("<sandbox>", "<string>")):
+                    return True
+                frame = frame.f_back
+        except ValueError:
+            pass
+        return False
+    return _is_user_frame
+
+
+_is_user_frame = _make_is_user_frame(sys._getframe)
+
 
 # 拦截 import — 用闭包捕获 _real_import 引用
 _real_import = builtins.__import__
 
-def _make_sandbox_import(real_import):
+
+def _make_sandbox_import(real_import, is_user_frame, sys_mod, blocked):
     def _sandbox_import(name, globals=None, locals=None, fromlist=(), level=0, **kwargs):
         top = name.split(".")[0] if name else ""
-        if top in BLOCKED_IMPORTS:
-            # 用 sys._getframe（不触发 linecache→import os）判断是否用户代码。
-            # 用户从 <sandbox>/<string> 导入黑名单 → 拒绝。
-            # stdlib 内部二次 import（如 linecache 拉 os）→ 返回已预加载模块。
-            user_frame = False
-            try:
-                f = sys._getframe(1)
-                for _ in range(8):
-                    if f is None:
-                        break
-                    fn = f.f_code.co_filename or ""
-                    if fn in ("<sandbox>", "<string>") or fn.endswith(
-                        ("<sandbox>", "<string>")
-                    ):
-                        user_frame = True
-                        break
-                    f = f.f_back
-            except ValueError:
-                pass
-            if user_frame:
-                print("__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IMPORT", file=sys.stderr)
+        if top in blocked:
+            if is_user_frame():
+                print("__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IMPORT", file=sys_mod.stderr)
                 raise ImportError(
                     f"[SANDBOX_FORBIDDEN_IMPORT] import {name!r} is blocked "
                     f"in code_executor sandbox"
                 )
-            if top in sys.modules:
-                return sys.modules[top]
-            if name in sys.modules:
-                return sys.modules[name]
-            # 未预加载的黑名单模块：仍拒绝
-            print("__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IMPORT", file=sys.stderr)
+            if top in sys_mod.modules:
+                return sys_mod.modules[top]
+            if name in sys_mod.modules:
+                return sys_mod.modules[name]
+            print("__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IMPORT", file=sys_mod.stderr)
             raise ImportError(
                 f"[SANDBOX_FORBIDDEN_IMPORT] import {name!r} is blocked "
                 f"in code_executor sandbox"
@@ -83,7 +87,22 @@ def _make_sandbox_import(real_import):
         return real_import(name, globals, locals, fromlist, level, **kwargs)
     return _sandbox_import
 
-builtins.__import__ = _make_sandbox_import(_real_import)
+
+builtins.__import__ = _make_sandbox_import(_real_import, _is_user_frame, sys, BLOCKED_IMPORTS)
+
+_real_open = builtins.open
+
+
+def _make_sandbox_open(real_open, is_user_frame, sys_mod):
+    def _sandbox_open(*args, **kwargs):
+        if is_user_frame():
+            print("__SANDBOX_ERROR__:SANDBOX_FORBIDDEN_IO", file=sys_mod.stderr)
+            raise PermissionError("[SANDBOX_FORBIDDEN_IO] open() is blocked in code_executor sandbox")
+        return real_open(*args, **kwargs)
+    return _sandbox_open
+
+
+builtins.open = _make_sandbox_open(_real_open, _is_user_frame, sys)
 
 # 网络白名单: 空=全部 deny, 非空则只允许 host:port 列表
 _WHITE_LIST = set()
@@ -93,12 +112,14 @@ if _allow_env.strip():
         entry = entry.strip()
         if entry:
             _WHITE_LIST.add(entry)
+_ALLOWED_HOSTS = {entry.rsplit(":", 1)[0] for entry in _WHITE_LIST if ":" in entry}
 
 _real_socket = _socket_mod.socket
 
-def _make_sandbox_socket(real_socket):
+
+def _make_sandbox_socket(real_socket, white_list):
     class _WrappedSocket:
-        """包裹真实 socket 对象，拦截 .connect() / .connect_ex() 做网络白名单校验。"""
+        """包裹真实 socket 对象，拦截 .connect() / .connect_ex() / .sendto() 做网络白名单校验。"""
 
         def __init__(self, real_sock):
             self._sock = real_sock
@@ -106,28 +127,32 @@ def _make_sandbox_socket(real_socket):
                            "getsockopt", "setsockopt", "setblocking", "settimeout",
                            "gettimeout", "fileno", "close", "shutdown",
                            "bind", "listen", "accept", "send", "sendall",
-                           "sendto", "recv", "recvfrom", "recv_into",
+                           "recv", "recvfrom", "recv_into",
                            "makefile", "detach", "dup"):
                 if hasattr(real_sock, _attr):
                     setattr(self, _attr, getattr(real_sock, _attr))
 
-        def connect(self, address):
+        def _check_address(self, address):
             host, port = address[0], address[1]
-            key = f"{host}:{port}"
-            if key in _WHITE_LIST:
-                return self._sock.connect(address)
-            raise PermissionError(
-                "[SANDBOX_NETWORK_DENIED] outbound network connections blocked"
-            )
+            if f"{host}:{port}" not in white_list:
+                raise PermissionError(
+                    "[SANDBOX_NETWORK_DENIED] outbound network connections blocked"
+                )
+
+        def connect(self, address):
+            self._check_address(address)
+            return self._sock.connect(address)
 
         def connect_ex(self, address):
-            host, port = address[0], address[1]
-            key = f"{host}:{port}"
-            if key in _WHITE_LIST:
-                return self._sock.connect_ex(address)
-            raise PermissionError(
-                "[SANDBOX_NETWORK_DENIED] outbound network connections blocked"
-            )
+            self._check_address(address)
+            return self._sock.connect_ex(address)
+
+        def sendto(self, data, *args):
+            address = args[-1] if args else None
+            if address is None:
+                raise PermissionError("[SANDBOX_NETWORK_DENIED] outbound network connections blocked")
+            self._check_address(address)
+            return self._sock.sendto(data, *args)
 
     def _maybe_allowed_socket(*args, **kwargs):
         real = real_socket(*args, **kwargs)
@@ -135,27 +160,64 @@ def _make_sandbox_socket(real_socket):
 
     return _maybe_allowed_socket
 
-_socket_mod.socket = _make_sandbox_socket(_real_socket)
+
+_socket_mod.socket = _make_sandbox_socket(_real_socket, _WHITE_LIST)
 
 _real_create_connection = _socket_mod.create_connection
 
-def _make_sandbox_create_connection(real_create_connection):
+
+def _make_sandbox_create_connection(real_create_connection, white_list):
     def _controlled_create_connection(address, *args, **kwargs):
         host, port = address
         key = f"{host}:{port}"
-        if key in _WHITE_LIST:
+        if key in white_list:
             return real_create_connection(address, *args, **kwargs)
         raise PermissionError(
             "[SANDBOX_NETWORK_DENIED] outbound network connections blocked"
         )
     return _controlled_create_connection
 
-_socket_mod.create_connection = _make_sandbox_create_connection(_real_create_connection)
 
-# Hook 安装完毕：删除 _real_* 引用，防止子进程代码通过 sitecustomize_gismind
-# 模块属性直接访问原始函数绕过沙箱防护。
-del _real_import, _real_socket, _real_create_connection
+_socket_mod.create_connection = _make_sandbox_create_connection(_real_create_connection, _WHITE_LIST)
 
-# 清理 os 模块：读完 env 配置后从 sys.modules 移除，防止注入代码通过
+_real_getaddrinfo = _socket_mod.getaddrinfo
+
+
+def _make_sandbox_getaddrinfo(real_getaddrinfo, allowed_hosts):
+    def _controlled_getaddrinfo(host, port, *args, **kwargs):
+        if str(host) in allowed_hosts:
+            return real_getaddrinfo(host, port, *args, **kwargs)
+        raise PermissionError(
+            "[SANDBOX_NETWORK_DENIED] outbound DNS resolution blocked"
+        )
+    return _controlled_getaddrinfo
+
+
+_socket_mod.getaddrinfo = _make_sandbox_getaddrinfo(_real_getaddrinfo, _ALLOWED_HOSTS)
+
+# Hook 安装完毕：删除所有宿主机模块与原始函数引用，防止子进程代码通过
+# sitecustomize_gismind 模块属性直接绕过沙箱防护。
+_sys_ref = sys
+del (
+    _real_import,
+    _real_open,
+    _real_socket,
+    _real_create_connection,
+    _real_getaddrinfo,
+    _os_mod,
+    _socket_mod,
+    _pickle_mod,
+    _zipfile_mod,
+    _io_mod,
+    _linecache_mod,
+    _traceback_mod,
+    _allow_env,
+    builtins,
+    sys,
+)
+
+# 清理 os / _socket 模块：读完 env 配置后从 sys.modules 移除，防止注入代码通过
 # sys.modules['os'] 取回 os 模块绕过 import 黑名单。
-sys.modules.pop("os", None)
+_sys_ref.modules.pop("os", None)
+_sys_ref.modules.pop("_socket", None)
+del _sys_ref

@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # 应用
     APP_ENV: str = "dev"
     APP_DEBUG: bool = False
-    APP_HOST: str = "0.0.0.0"
+    APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8000
     APP_LOG_LEVEL: str = "INFO"
     APP_LOG_FORMAT: str = "console"
@@ -118,8 +118,8 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
-    @property
-    def runtime_paths(self) -> dict[str, str]:
+    def compute_runtime_paths(self) -> dict[str, str]:
+        """Resolve and validate runtime paths without writing to disk."""
         project_root = Path(self.APP_PROJECT_ROOT).expanduser()
         if not project_root.is_absolute():
             project_root = (Path.cwd() / project_root).resolve()
@@ -151,7 +151,7 @@ class Settings(BaseSettings):
                 raise ValueError("runtime paths must stay within APP_DATA_ROOT")
         if not same_volume(artifact_dir, staging_dir):
             raise ValueError("artifact and staging directories must share a volume")
-        paths = {
+        return {
             "project_root": str(project_root),
             "data_root": str(data_root),
             "runtime_db": str(runtime_db),
@@ -162,13 +162,23 @@ class Settings(BaseSettings):
             "artifact_volume": volume_identity(artifact_dir),
             "staging_volume": volume_identity(staging_dir),
         }
-        data_root.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def runtime_paths(self) -> dict[str, str]:
+        paths = self.compute_runtime_paths()
+        data_root = Path(paths["data_root"])
         manifest_path = data_root / "runtime_paths.json"
+        serialized = json.dumps(paths, ensure_ascii=False, sort_keys=True) + "\n"
+        try:
+            if manifest_path.is_file() and manifest_path.read_text(encoding="utf-8") == serialized:
+                return paths
+        except OSError:
+            pass
+        data_root.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=".runtime_paths.", suffix=".tmp", dir=str(data_root))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(paths, stream, ensure_ascii=False, sort_keys=True)
-                stream.write("\n")
+                stream.write(serialized)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temp_name, manifest_path)

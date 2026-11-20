@@ -127,11 +127,11 @@ describe('Runtime display-only map projection', () => {
     expect(projectRuntimeMapLayer(display, gcj)).toEqual(display);
   });
 
-  it.each([[0, 0, Infinity, 1], [0, NaN, 1, 1], [1, 0, 0, 1], [0, 1, 1, 0], [0, 1, 2]])('rejects malformed source bbox %j', (bbox) => {
+  it.each([[[0, 0, Infinity, 1]], [[0, NaN, 1, 1]], [[1, 0, 0, 1]], [[0, 1, 1, 0]], [[0, 1, 2]]])('rejects malformed source bbox %j', (bbox) => {
     expect(() => projectRuntimeMapLayer({ ...map(), bbox }, wgs)).toThrow(/bbox/);
   });
 
-  it.each([[Infinity, 32], [118, NaN], [118, 32, Infinity], ['118', 32], [13000000, 3700000]])('rejects nonfinite/nongeographic coordinates %j', (coordinates) => {
+  it.each([[[Infinity, 32]], [[118, NaN]], [[118, 32, Infinity]], [['118', 32]], [[13000000, 3700000]]])('rejects nonfinite/nongeographic coordinates %j', (coordinates) => {
     expect(() => projectRuntimeMapLayer(map(coordinates), wgs)).toThrow(/坐标/);
   });
 

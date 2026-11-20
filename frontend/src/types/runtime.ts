@@ -99,6 +99,8 @@ export interface SessionRun {
   session_id: string;
   status: RunStatus;
   run_version: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface RunSnapshot {
@@ -156,6 +158,8 @@ export interface RunCommandResponse {
   run_id: string;
   status: RunStatus;
   run_version: number;
+  requires_user_decision?: boolean;
+  pending_task_ids?: string[];
 }
 
 export interface RuntimeErrorEnvelope {

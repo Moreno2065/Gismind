@@ -14,7 +14,9 @@ LOCKS = ("runtime.worker.lock", "runtime.api.lock")
 
 
 def _managed_paths():
-    configured = dict(get_settings().runtime_paths)
+    settings_obj = get_settings()
+    compute = getattr(settings_obj, "compute_runtime_paths", None)
+    configured = dict(compute() if callable(compute) else settings_obj.runtime_paths)
     root = Path(configured["data_root"]).resolve()
     manifest_path = root / "runtime_paths.json"
     if not manifest_path.is_file():

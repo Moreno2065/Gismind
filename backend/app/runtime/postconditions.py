@@ -354,7 +354,13 @@ def validate_attribute_filter(result: Any, inputs: dict[str, Any], params: dict[
         elif operation == "is_null":
             selected = column.isna()
         elif operation == "contains":
-            selected = column.astype(str).str.contains(str(value), na=False)
+            import re as _re
+            pattern = str(value)
+            try:
+                _re.compile(pattern)
+                selected = column.astype(str).str.contains(pattern, na=False, regex=True)
+            except _re.error:
+                selected = column.astype(str).str.contains(pattern, na=False, regex=False)
         else:
             return False
         if not pd.api.types.is_bool_dtype(selected.dtype):
@@ -676,7 +682,7 @@ def validate_geo_geocode(result: Any, inputs: dict[str, Any], params: dict[str, 
         return isinstance(payload.get("candidates"), list)
     location = payload.get("location")
     provider = result.get("source") or payload.get("source")
-    if provider not in {"Amap", "OSM", "cache"}:
+    if provider not in {"Amap", "OSM", "OSM_Nominatim", "cache"}:
         return False
     if not isinstance(location, (list, tuple)) or len(location) != 2:
         return False

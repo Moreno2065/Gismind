@@ -13,6 +13,7 @@ Sprint 1 增量（坐标系原点漂移修复）：
   旧 v0 schema 缓存值（无 candidates 字段）反序列化时降级 — 仅保留主点。
 """
 
+from collections import OrderedDict
 import hashlib
 import json
 from typing import Optional
@@ -22,7 +23,18 @@ import httpx
 from app.config import settings
 from app.tools.geo_transform import haversine_m, wgs84_to_gcj02
 
-_CACHE: dict[str, str] = {}
+_CACHE_MAX_SIZE = 1024
+
+
+class _BoundedCache(OrderedDict[str, str]):
+    def __setitem__(self, key: str, value: str) -> None:
+        super().__setitem__(key, value)
+        self.move_to_end(key)
+        while len(self) > _CACHE_MAX_SIZE:
+            self.popitem(last=False)
+
+
+_CACHE: dict[str, str] = _BoundedCache()
 
 GEOCODE_ENDPOINT = "https://restapi.amap.com/v3/geocode/geo"
 REVERSE_ENDPOINT = "https://restapi.amap.com/v3/geocode/regeo"
@@ -165,6 +177,10 @@ class GeoCoder:
                 resp.raise_for_status()
                 body = resp.json()
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError):
+            fallback = await self._fallback_nominatim(address)
+            if fallback:
+                _CACHE[key] = json.dumps(fallback, ensure_ascii=False)
+                return fallback
             return {"status": "empty", "message": "地理编码服务暂不可用"}
 
         if body.get("status") != "1":

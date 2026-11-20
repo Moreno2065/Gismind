@@ -1481,7 +1481,13 @@ class SpatialAnalyzer:
             elif operator == "<=":
                 mask = col <= value
             elif operator == "contains":
-                mask = col.astype(str).str.contains(str(value), na=False)
+                import re as _re
+                pattern = str(value)
+                try:
+                    _re.compile(pattern)
+                    mask = col.astype(str).str.contains(pattern, na=False, regex=True)
+                except _re.error:
+                    mask = col.astype(str).str.contains(pattern, na=False, regex=False)
             elif operator == "in":
                 if not isinstance(value, (list, tuple, set, frozenset)):
                     return {"status": "error", "message": "in 运算符要求 value 为数组"}
@@ -1616,7 +1622,15 @@ class SpatialAnalyzer:
                     return {"status": "error", "message": "字段计算常数无效"}
 
             wgs84_gdf = wgs84_gdf.copy()
-            wgs84_gdf[field_name] = values.astype(float)
+            cast_type = (field_type or "float").strip().lower()
+            if cast_type == "int":
+                wgs84_gdf[field_name] = np.rint(values).astype(int)
+            elif cast_type == "str":
+                wgs84_gdf[field_name] = [str(v) for v in values]
+            elif cast_type == "bool":
+                wgs84_gdf[field_name] = values.astype(bool)
+            else:
+                wgs84_gdf[field_name] = values.astype(float)
             result = self._to_gcj02_output(wgs84_gdf)
             return {"status": "success", "data": result}
         except Exception as e:

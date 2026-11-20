@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { getRuntimeArtifact, getRuntimeArtifactContent, runtimeArtifactContentUrl } from '@/api/client';
 import { projectRuntimeMapLayer, type RuntimeMapDisplay } from '@/lib/runtimeMapProjection';
 import type { ArtifactSummary, RunTaskProjection } from '@/types/runtime';
@@ -129,7 +129,24 @@ function previewFor(artifact: ArtifactSummary, content: unknown): Preview {
   return result;
 }
 
-export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferredArtifactId, resultRunId, tasks = [] }: ArtifactWorkspaceProps) {
+function downloadFilename(artifact: ArtifactSummary): string | true {
+  const name = artifactName(artifact);
+  const raster = artifact.type === 'Raster' || (artifact.type === 'File' && object(artifact.schema?.inspection)?.format === 'geotiff');
+  if (raster) return /\.tiff?$/i.test(name) ? name : `${name}.tif`;
+  if (artifact.type === 'Vector') {
+    if (/\.(geo)?json$/i.test(name)) return name;
+    const mediaType = artifact.media_type?.split(';')[0].trim().toLowerCase();
+    if (!mediaType || mediaType === 'application/geo+json') return `${name}.geojson`;
+    if (mediaType === 'application/json' || mediaType.endsWith('+json')) return `${name}.json`;
+    return name;
+  }
+  if (artifact.type === 'MapLayer' || artifact.type === 'POISet' || (artifact.type === 'Table' && canReadJson(artifact))) {
+    return /\.json$/i.test(name) ? name : `${name}.json`;
+  }
+  return name || true;
+}
+
+function ArtifactWorkspaceImpl({ artifacts, onUse, disabled = false, preferredArtifactId, resultRunId, tasks = [] }: ArtifactWorkspaceProps) {
   const [selection, setSelection] = useState<{ id: string; runId?: string | null } | null>(null);
   const [retry, setRetry] = useState(0);
   const [loaded, setLoaded] = useState<LoadedArtifact | null>(null);
@@ -168,11 +185,7 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferre
   const producer = tasks.find(task => task.task_id === selected?.producer_task_id);
   const isLoading = Boolean(currentId && (!current || current.loading));
   const raster = selected?.type === 'Raster' || (selected?.type === 'File' && object(selected.schema?.inspection)?.format === 'geotiff');
-  const name = selected ? artifactName(selected) : '';
-  const jsonTable = selected?.type === 'Table' && canReadJson(selected);
-  let downloadName: string | true = true;
-  if (raster) downloadName = /\.tiff?$/i.test(name) ? name : `${name}.tif`;
-  if (jsonTable) downloadName = /\.json$/i.test(name) ? name : `${name}.json`;
+  const downloadName: string | true = selected ? downloadFilename(selected) : true;
 
   if (!selected) return <section className="flex min-h-[380px] flex-1 flex-col items-center justify-center px-6 py-12 text-center" aria-label="成果工作区">
     <ContourMark />
@@ -235,6 +248,8 @@ export function ArtifactWorkspace({ artifacts, onUse, disabled = false, preferre
     </div>
   </section>;
 }
+
+export const ArtifactWorkspace = memo(ArtifactWorkspaceImpl);
 
 function Metadata({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
   return <div className={`min-w-0 ${wide ? 'col-span-2' : ''}`}><dt className="mb-1.5 text-[10px] text-ink-500">{label}</dt><dd className="break-all font-mono text-[11px] leading-5 text-ink-300">{value}</dd></div>;

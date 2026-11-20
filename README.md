@@ -19,11 +19,12 @@ Gismind 是一个单机、单用户的 **Agent-driven GIS Runtime**。LLM 只负
 ## 能力边界
 
 - 59 个公开 Runtime ToolContract，包含 Vector、Raster、POI、Coordinate、Table、MapLayer、File 和 Code 操作；
-- Compiler 在执行前检查输入输出类型、端口基数、CRS、参数 schema、DAG、资源预算和 Code Mode 安全边界；
-- Vector/Raster/Code 高风险任务在可终止子进程中执行，SQLite 租约支持 at-least-once 恢复；
-- Artifact 使用不可变 `art_*` 身份与 SHA-256 CAS Blob 分离，支持血缘、缓存、验证和 GC；
-- Event Log 与状态变更同事务提交，SSE 支持 `Last-Event-ID` 重放、追尾和断线恢复；
-- 前端提供运行时间线、awaiting-input 恢复、地图图层和 Artifact 下载。
+- Compiler 在执行前检查输入输出类型、端口基数、CRS、参数 schema（含 `minimum`/`exclusiveMinimum`/`maximum`/`exclusiveMaximum`）、DAG、资源预算和 Code Mode 安全边界；
+- Vector/Raster/Code 高风险任务在可终止子进程中执行，SQLite 租约支持 at-least-once 恢复与可重试任务退避调度；
+- 上传接口在受限子进程中执行物理格式、ZIP 解压字节上限及声明 CRS/bbox 交叉校验；
+- Artifact 使用不可变 `art_*` 身份与 SHA-256 CAS Blob 分离，支持血缘、缓存、验证、受控栅格预览（`/raster-preview`）和 GC；
+- Event Log 与状态变更同事务提交，只读快照采用 `BEGIN DEFERRED` 避免阻塞写入，SSE 支持 `Last-Event-ID` 重放、追尾和断线恢复；
+- 前端提供运行时间线、awaiting-input 恢复、工作流示例、矢量/WGS84 栅格预览地图、100 行分页属性表和 Artifact 下载。
 - 取消结果不确定时，幂等且无副作用 Task 可在 resume 事务内回到 `ready`；副作用/非幂等 Task 保持 `awaiting_input` 并要求显式 `task_decisions.<task_id>="retry"`，不会自动排队。
 
 ## 本地启动
@@ -66,6 +67,7 @@ python -m app.runtime.gate --phase post-delete
 
 cd ..\frontend
 npm run typecheck
+npm run test
 npm run build
 ```
 
@@ -73,11 +75,12 @@ npm run build
 
 ```powershell
 $env:GISMIND_LIVE_LLM='1'
+$env:GISMIND_LIVE_LLM_CASES='201'
 cd backend
 python -m pytest tests/live/test_runtime_live_llm_actions.py -q
 ```
 
-该套件使用 200 条不泄露 operation 名称的自然语言意图，分别统计首次编译率与至多一次 repair 后的最终编译率；没有 provider 凭据时测试会跳过，不能把跳过写成通过。
+该套件使用 201 条不泄露 operation 名称的自然语言意图，分别统计首次编译率与至多一次 repair 后的最终编译率；没有 provider 凭据时测试会跳过，不能把跳过写成通过。仓库另提供 `tests.browser.runtime_chinese_browser`、`tests.live.prompt_e2e_2000`、`tests.live.runtime_robustness_smoke` 和 `tests.live.runtime_small_e2e` 供真实模型/浏览器回归使用。
 
 ## 文档与删除记录
 

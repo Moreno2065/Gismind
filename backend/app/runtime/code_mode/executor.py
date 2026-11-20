@@ -36,14 +36,8 @@ def execute_source(source: str, *, inputs: dict[str, dict[str, Any]] | None = No
             "type": item.get("type"),
         }
     marker = "__RUNTIME_RESULT__"
-    encoded_literal = repr(json.dumps(encoded_inputs, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
-    wrapper = (
-        f"__artifact_inputs__ = json.loads({encoded_literal})\n"
-        "inputs = {name: base64.b64decode(value['data_b64']) for name, value in __artifact_inputs__.items()}\n"
-        "artifact_metadata = {name: {key: value[key] for key in ('artifact_id','content_hash','media_type','type')} for name, value in __artifact_inputs__.items()}\n"
-        + source + "\n" + f"print({marker!r} + repr(globals().get('__result__')))\n"
-    )
-    result = run_in_sandbox(wrapper)
+    user_code = source + "\n" + f"print({marker!r} + repr(__result__ if '__result__' in locals() else None))\n"
+    result = run_in_sandbox(user_code, payload_inputs=encoded_inputs)
     payload: Any = None
     for line in result.stdout.splitlines():
         if line.startswith(marker):

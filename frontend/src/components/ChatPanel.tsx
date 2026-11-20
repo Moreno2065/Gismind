@@ -1,6 +1,20 @@
 // Runtime chat projection. The durable Run/Event ledger is authoritative.
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { cancelRuntimeRun, confirmRuntimeRun, createRuntimeRun, getRuntimeRun, getRuntimeArtifact, getRuntimeArtifactContent, getSessionMessages, getSessionRuns, resumeRuntimeRun, runtimeArtifactContentUrl, uploadRuntimeArtifact, type UploadDeclaration } from '@/api/client';
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  cancelRuntimeRun,
+  confirmRuntimeRun,
+  createRuntimeRun,
+  getRuntimeArtifact,
+  getRuntimeArtifactContent,
+  getRuntimeRun,
+  getSessionMessages,
+  getSessionRuns,
+  resumeRuntimeRun,
+  RuntimeApiError,
+  runtimeArtifactContentUrl,
+  uploadRuntimeArtifact,
+  type UploadDeclaration,
+} from '@/api/client';
 import { projectionFromSnapshot, useRuntimeRun } from '@/hooks/useRuntimeRun';
 import { useScrollAnchor } from '@/hooks/useScrollAnchor';
 import { countFeatures } from '@/lib/utils';
@@ -17,7 +31,14 @@ import { RunStatusBar } from './RunStatusBar';
 
 interface ActiveRun { runId: string; messageId: string }
 interface PendingCreate { request: CreateRunRequest; messageId: string }
+interface PendingCommand { key: string; commandId: string }
 interface ChatPanelProps { sessionId: string; onSessionUpdate?: () => void }
+interface RuntimeComposerHandle {
+  setDraft: (text: string) => void;
+  clearDraft: () => void;
+  openFilePicker: () => void;
+}
+
 const terminalRunStatuses = new Set(['completed', 'failed', 'cancelled']);
 
 // A session owns its requests, message bindings and local projection lifecycle.
@@ -30,7 +51,6 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     const cached = loadMessages(sessionId); const active = loadActiveRun(sessionId);
     return active ? ensureAssistant(cached, active) : cached;
   });
-  const [input, setInput] = useState('');
   const [recovering, setRecovering] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -54,27 +74,103 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
   const scroll = useScrollAnchor<HTMLDivElement>();
   const requestRef = useRef<AbortController | null>(null);
   const pendingCreateRef = useRef<PendingCreate | null>(null);
+  const pendingCommandRef = useRef<PendingCommand | null>(null);
   const lifecycleRef = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
   const artifactIdsRef = useRef(new Set<string>());
   const settlingRef = useRef(new Set<string>());
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerRef = useRef<RuntimeComposerHandle | null>(null);
 
   const updateAssistant = useCallback((messageId: string, update: (message: ChatMessage) => ChatMessage) => {
     setMessages((current) => current.map((message) => message.id === messageId ? update(message) : message));
   }, []);
 
+  const clearActiveRunBinding = useCallback((expectedRunId?: string) => {
+    if (expectedRunId && activeRunRef.current?.runId !== expectedRunId) return false;
+    activeRunRef.current = null;
+    pendingCommandRef.current = null;
+    saveActiveRun(sessionId, null);
+    setActiveRun(null);
+    return true;
+  }, [sessionId]);
+
   const attachRun = useCallback((binding: ActiveRun) => {
     activeRunRef.current = binding;
+    pendingCommandRef.current = null;
     saveActiveRun(sessionId, binding);
     setMessages((current) => ensureAssistant(current, binding));
     setActiveRun(binding);
   }, [sessionId]);
 
+  const hydrateMapArtifact = useCallback((
+    runId: string,
+    messageId: string,
+    artifact: ArtifactSummary,
+    signal: AbortSignal | undefined,
+    fallbackExpiredOnError = false,
+  ) => {
+    const key = runId + ':' + artifact.artifact_id;
+    if (artifactIdsRef.current.has(key)) return;
+    artifactIdsRef.current.add(key);
+    const appendBlock = (block: MessageBlock) => {
+      if (signal?.aborted) return;
+      updateAssistant(messageId, (message) => ({
+        ...message,
+        blocks: [
+          ...message.blocks.filter((existing) => !('artifact_id' in existing) || existing.artifact_id !== ('artifact_id' in block ? block.artifact_id : undefined)),
+          block,
+        ],
+      }));
+    };
+    void (async () => {
+      const metadata = artifact.crs ? artifact : await getRuntimeArtifact(artifact.artifact_id, signal);
+      if (metadata.artifact_id !== artifact.artifact_id || metadata.type !== 'MapLayer') {
+        throw new Error('地图成果标识或类型与服务端响应不一致');
+      }
+      const content = await getRuntimeArtifactContent(artifact.artifact_id, signal);
+      const map = projectRuntimeMapLayer(content, metadata.crs);
+      appendBlock({ type: 'map', artifact_id: artifact.artifact_id, layers: map.layers, bbox: map.bbox });
+      if (!signal?.aborted) setCommandError((current) => current?.startsWith('地图加载失败：') ? null : current);
+    })().catch((error) => {
+      artifactIdsRef.current.delete(key);
+      if (signal?.aborted) return;
+      if (fallbackExpiredOnError) {
+        appendBlock({ type: 'map', artifact_id: artifact.artifact_id, layers: [], bbox: [0, 0, 0, 0], expired: true });
+      }
+      setCommandError('地图加载失败：' + (error as Error).message);
+    });
+  }, [updateAssistant]);
+
   useEffect(() => {
     const controller = new AbortController(); lifecycleRef.current = controller;
     return () => { controller.abort(); requestRef.current?.abort(); };
   }, [sessionId]);
+
+  // Unlock stale localStorage activeRun if the backend confirms 404 RUN_NOT_FOUND
+  // or if the fetched run belongs to a different session.
+  useEffect(() => {
+    if (!activeRun) return;
+    const staleMissing = runtime.error instanceof RuntimeApiError
+      && (runtime.error.status === 404 || runtime.error.code === 'RUN_NOT_FOUND');
+    const wrongSession = !!runtime.projection
+      && runtime.projection.run_id === activeRun.runId
+      && runtime.projection.session_id !== sessionId;
+    if (!staleMissing && !wrongSession) return;
+    const { runId, messageId } = activeRun;
+    if (!clearActiveRunBinding(runId)) return;
+    const notice = staleMissing
+      ? '上次运行记录已不存在，已恢复输入。'
+      : '本地缓存的运行记录与当前会话不匹配，已恢复输入。';
+    setCommandError(notice);
+    updateAssistant(messageId, (message) => {
+      if (message.status === 'done' || message.status === 'error') return message;
+      return {
+        ...message,
+        status: 'error',
+        error: { code: staleMissing ? runtime.error instanceof RuntimeApiError ? runtime.error.code : 'RUN_NOT_FOUND' : 'SESSION_MISMATCH', message: notice },
+      };
+    });
+  }, [activeRun, clearActiveRunBinding, runtime.error, runtime.projection, sessionId, updateAssistant]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,6 +187,10 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
       }
       if (runs.status === 'fulfilled') {
         const active = runs.value.find((run) => run.session_id === sessionId && !terminalRunStatuses.has(run.status));
+        const currentBinding = activeRunRef.current;
+        const confirmedTerminalActive = !active && currentBinding
+          ? runs.value.find((run) => run.session_id === sessionId && run.run_id === currentBinding.runId && terminalRunStatuses.has(run.status))
+          : undefined;
         if (active) {
           const saved = loadActiveRun(sessionId);
           attachRun(saved?.runId === active.run_id ? saved : { runId: active.run_id, messageId: 'assistant_' + active.run_id });
@@ -112,6 +212,24 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
             }
           }
         }));
+        // If server run listing confirmed the cached activeRun is already terminal
+        // and no newer active run replaced it, release the composer lock.
+        if (!controller.signal.aborted && confirmedTerminalActive && currentBinding
+            && activeRunRef.current?.runId === confirmedTerminalActive.run_id
+            && !settlingRef.current.has(confirmedTerminalActive.run_id)) {
+          clearActiveRunBinding(confirmedTerminalActive.run_id);
+          updateAssistant(currentBinding.messageId, (message) => {
+            if (message.status === 'done' || message.status === 'error') return message;
+            if (confirmedTerminalActive.status === 'completed') return { ...message, status: 'done' };
+            return {
+              ...message,
+              status: 'error',
+              error: confirmedTerminalActive.status === 'cancelled'
+                ? { code: 'RUN_CANCELLED', message: '任务已取消' }
+                : { code: 'RUN_FAILED', message: '任务执行失败' },
+            };
+          });
+        }
       }
       if (!controller.signal.aborted) {
         if (history.status === 'rejected' || runs.status === 'rejected') setRecoveryError('会话恢复未完成，请重试；本地缓存不是完整运行记录。');
@@ -119,7 +237,7 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
       }
     });
     return () => controller.abort();
-  }, [attachRun, sessionId, recoveryRevision]);
+  }, [attachRun, clearActiveRunBinding, sessionId, recoveryRevision, updateAssistant]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -130,6 +248,15 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     return () => window.clearTimeout(timeout);
   }, [messages, sessionId]);
 
+  // Auto-stick scroll to bottom when new messages, blocks, or trace events arrive
+  const lastMessage = messages.at(-1);
+  const scrollSignal = `${messages.length}:${lastMessage?.id ?? ''}:${lastMessage?.status ?? ''}:${lastMessage?.blocks.length ?? 0}:${lastMessage?.executionTrace?.length ?? 0}`;
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const raf = window.requestAnimationFrame(() => scroll.maybeStick());
+    return () => window.cancelAnimationFrame(raf);
+  }, [scrollSignal, messages.length, scroll.maybeStick]);
+
   useEffect(() => {
     if (!activeRun || !projection || projection.run_id !== activeRun.runId) return;
     const { messageId, runId } = activeRun;
@@ -138,7 +265,11 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     const statusMap: Record<string, ChatMessage['status']> = { queued: 'thinking', planning: 'thinking', ready: 'thinking', awaiting_input: 'fetching', running: 'fetching', cancelling: 'fetching', completed: 'done', failed: 'error', cancelled: 'error' };
     updateAssistant(messageId, (message) => ({ ...message, status: statusMap[projection.status] ?? 'thinking',
       statusMessage: projection.status === 'awaiting_input' ? String(projection.awaiting_input?.message ?? '需要补充输入') : 'Run ' + projection.status,
-      error: projection.status === 'failed' ? { code: String(projection.diagnostic?.code ?? 'RUN_FAILED'), message: String(projection.diagnostic?.message ?? '任务执行失败') } : undefined,
+      error: projection.status === 'failed'
+        ? { code: String(projection.diagnostic?.code ?? 'RUN_FAILED'), message: String(projection.diagnostic?.message ?? '任务执行失败') }
+        : projection.status === 'cancelled'
+          ? { code: String(projection.diagnostic?.code ?? 'RUN_CANCELLED'), message: String(projection.diagnostic?.message ?? '任务已取消') }
+          : undefined,
       executionTrace: projection.events.length ? projection.events : message.executionTrace,
     }));
     const signal = lifecycleRef.current?.signal;
@@ -147,22 +278,14 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
       updateAssistant(messageId, (message) => ({ ...message, blocks: [...message.blocks.filter((existing) => !('artifact_id' in existing) || existing.artifact_id !== ('artifact_id' in block ? block.artifact_id : undefined)), block] }));
     };
     for (const artifact of projection.output_artifacts) {
-      const key = runId + ':' + artifact.artifact_id;
-      if (artifactIdsRef.current.has(key)) continue;
-      artifactIdsRef.current.add(key);
       if (artifact.type === 'MapLayer') {
-        void (async () => {
-          const metadata = artifact.crs ? artifact : await getRuntimeArtifact(artifact.artifact_id, signal);
-          if (metadata.artifact_id !== artifact.artifact_id || metadata.type !== 'MapLayer') throw new Error('地图成果标识或类型与服务端响应不一致');
-          const content = await getRuntimeArtifactContent(artifact.artifact_id, signal);
-          const map = projectRuntimeMapLayer(content, metadata.crs);
-          appendBlock({ type: 'map', artifact_id: artifact.artifact_id, layers: map.layers, bbox: map.bbox });
-          if (!signal?.aborted) setCommandError(current => current?.startsWith('地图加载失败：') ? null : current);
-        })().catch((error) => {
-          artifactIdsRef.current.delete(key);
-          if (!signal?.aborted) setCommandError('地图加载失败：' + (error as Error).message);
-        });
-      } else appendBlock({ type: 'text', artifact_id: artifact.artifact_id, content: '[下载 ' + artifact.type + ' Artifact](' + runtimeArtifactContentUrl(artifact) + ')' });
+        hydrateMapArtifact(runId, messageId, artifact, signal, false);
+      } else {
+        const key = runId + ':' + artifact.artifact_id;
+        if (artifactIdsRef.current.has(key)) continue;
+        artifactIdsRef.current.add(key);
+        appendBlock({ type: 'text', artifact_id: artifact.artifact_id, content: '[下载 ' + artifact.type + ' Artifact](' + runtimeArtifactContentUrl(artifact) + ')' });
+      }
     }
     if (terminalRunStatuses.has(projection.status) && runtime.terminalSettled) {
       if (settlingRef.current.has(runId)) return;
@@ -173,26 +296,41 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
         if (!terminalRunStatuses.has(snapshot.status)) { settlingRef.current.delete(runId); if (isCurrentRun()) void runtime.connect(); return; }
         setArtifacts((current) => mergeArtifacts(current, snapshot.output_artifacts));
         if (isCurrentRun()) setLastProjection(projectionFromSnapshot(snapshot));
-        // A terminal event carries identities, not necessarily full metadata.
-        // Keep a durable map reference even if the final content read is delayed.
-        updateAssistant(messageId, (message) => ({ ...message, blocks: [
-          ...message.blocks,
-          ...snapshot.output_artifacts.filter(artifact => !message.blocks.some(block => 'artifact_id' in block && block.artifact_id === artifact.artifact_id)).map((artifact): MessageBlock => artifact.type === 'MapLayer'
-            ? { type: 'map', artifact_id: artifact.artifact_id, layers: [], bbox: [0, 0, 0, 0], expired: true }
-            : { type: 'text', artifact_id: artifact.artifact_id, content: '[下载 ' + artifact.type + ' Artifact](' + runtimeArtifactContentUrl(artifact) + ')' }),
-        ] }));
+        const nonMapOutputs = snapshot.output_artifacts.filter((artifact) => artifact.type !== 'MapLayer');
+        if (nonMapOutputs.length > 0) {
+          updateAssistant(messageId, (message) => ({ ...message, blocks: [
+            ...message.blocks,
+            ...nonMapOutputs
+              .filter((artifact) => !message.blocks.some((block) => 'artifact_id' in block && block.artifact_id === artifact.artifact_id))
+              .map((artifact): MessageBlock => ({ type: 'text', artifact_id: artifact.artifact_id, content: '[下载 ' + artifact.type + ' Artifact](' + runtimeArtifactContentUrl(artifact) + ')' })),
+          ] }));
+        }
+        // Hydrate any MapLayer first discovered at terminal settlement using
+        // the session lifecycle signal so clearing activeRun does not strand it.
+        for (const artifact of snapshot.output_artifacts) {
+          if (artifact.type === 'MapLayer') {
+            hydrateMapArtifact(runId, messageId, artifact, signal, true);
+          }
+        }
         // Session recovery may have attached another Run while this read waited.
         // Preserve this Run's results without detaching that newer binding.
         if (isCurrentRun()) {
-          activeRunRef.current = null;
-          saveActiveRun(sessionId, null); setActiveRun(null); onSessionUpdate?.();
+          clearActiveRunBinding(runId);
+          onSessionUpdate?.();
         }
       }).catch((error) => {
         settlingRef.current.delete(runId);
         if (!signal?.aborted && isCurrentRun()) setCommandError('最终结果同步失败，请重新连接：' + (error as Error).message);
       });
     }
-  }, [activeRun, onSessionUpdate, projection, runtime.terminalSettled, runtime.connect, sessionId, updateAssistant]);
+  }, [activeRun, clearActiveRunBinding, hydrateMapArtifact, onSessionUpdate, projection, runtime.terminalSettled, runtime.connect, sessionId, updateAssistant]);
+
+  const commandIdFor = useCallback((key: string): string => {
+    if (pendingCommandRef.current?.key === key) return pendingCommandRef.current.commandId;
+    const commandId = 'cmd_' + crypto.randomUUID();
+    pendingCommandRef.current = { key, commandId };
+    return commandId;
+  }, []);
 
   const runCommand = useCallback(async (action: (signal: AbortSignal) => Promise<RunCommandResponse>, onAccepted?: () => void) => {
     if (busyRef.current) return;
@@ -200,7 +338,11 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     const controller = new AbortController(); requestRef.current?.abort(); requestRef.current = controller;
     try {
       await action(controller.signal);
-      if (!controller.signal.aborted) { onAccepted?.(); void runtime.connect(); }
+      if (!controller.signal.aborted) {
+        pendingCommandRef.current = null;
+        onAccepted?.();
+        void runtime.connect();
+      }
     } catch (error) {
       if (!controller.signal.aborted) { setCommandError((error as Error).message); void runtime.connect(); }
     } finally {
@@ -211,14 +353,15 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
   const resume = useCallback((patch: Record<string, unknown>) => {
     if (!activeRun || !projection || projection.status !== 'awaiting_input') return;
     const runId = activeRun.runId;
-    void runCommand((signal) => resumeRuntimeRun(runId, 'cmd_' + crypto.randomUUID(), patch, projection.run_version, signal), () => {
-      setInput('');
+    const commandId = commandIdFor(JSON.stringify({ kind: 'resume', runId, runVersion: projection.run_version, patch }));
+    void runCommand((signal) => resumeRuntimeRun(runId, commandId, patch, projection.run_version, signal), () => {
+      composerRef.current?.clearDraft();
       setMessages((current) => [...current, createUserMessage(typeof patch.answer === 'string' ? patch.answer : typeof patch.clarification === 'string' ? patch.clarification : JSON.stringify(patch))]);
     });
-  }, [activeRun, projection, runCommand]);
+  }, [activeRun, commandIdFor, projection, runCommand]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (rawText: string) => {
+    const text = rawText.trim();
     if (!text || isRunning || structuredInput || uploadsBlocked || busyRef.current) return;
     if (awaitingInput) {
       const taskIds = Array.isArray(awaitingInput.task_ids) ? awaitingInput.task_ids.filter((item): item is string => typeof item === 'string') : [];
@@ -247,12 +390,12 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     } else {
       setMessages((current) => [...current, createUserMessage(text), { id: messageId, role: 'assistant', blocks: [], status: 'thinking', statusMessage: '提交 Runtime…', executionTrace: [], created_at: Date.now() }]);
     }
-    scroll.forceBottom();
+    window.requestAnimationFrame(() => scroll.forceBottom());
     try {
       const created = await createRuntimeRun(createRequest, controller.signal);
       if (!controller.signal.aborted) {
         if (pendingCreateRef.current === pendingCreate) pendingCreateRef.current = null;
-        setInput('');
+        composerRef.current?.clearDraft();
         setSelectedInputs([]);
         setPendingUploads((current) => current.filter((upload) => !submittedFiles.has(upload.file)));
         attachRun({ runId: created.run_id, messageId });
@@ -262,15 +405,28 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
         updateAssistant(messageId, (message) => ({ ...message, status: 'error', error: { code: 'RUN_CREATE_FAILED', message: (error as Error).message } }));
       }
     } finally { if (!controller.signal.aborted) { busyRef.current = false; setSubmitting(false); } }
-  }, [input, isRunning, structuredInput, uploadsBlocked, awaitingInput, cancellationDecision, resume, pendingUploads, selectedInputs, scroll, sessionId, attachRun, updateAssistant]);
+  }, [isRunning, structuredInput, uploadsBlocked, awaitingInput, cancellationDecision, resume, pendingUploads, selectedInputs, scroll, sessionId, attachRun, updateAssistant]);
 
-  const stop = () => {
-    if (activeRun && projection) void runCommand((signal) => cancelRuntimeRun(activeRun.runId, 'cmd_' + crypto.randomUUID(), projection.run_version, signal));
-  };
-  const confirm = (confirmation: PendingConfirmation) => {
-    if (activeRun && projection) void runCommand((signal) => confirmRuntimeRun(activeRun.runId, 'cmd_' + crypto.randomUUID(), confirmation, projection.run_version, signal));
-  };
-  const uploadFile = async (file: File, declaration?: UploadDeclaration) => {
+  const stop = useCallback(() => {
+    if (!activeRun || !projection) return;
+    const commandId = commandIdFor(JSON.stringify({ kind: 'cancel', runId: activeRun.runId, runVersion: projection.run_version }));
+    void runCommand((signal) => cancelRuntimeRun(activeRun.runId, commandId, projection.run_version, signal));
+  }, [activeRun, commandIdFor, projection, runCommand]);
+
+  const confirm = useCallback((confirmation: PendingConfirmation) => {
+    if (!activeRun || !projection) return;
+    const commandId = commandIdFor(JSON.stringify({
+      kind: 'confirm',
+      runId: activeRun.runId,
+      runVersion: projection.run_version,
+      confirmationId: confirmation.confirmation_id,
+      taskId: confirmation.task_id,
+      actionHash: confirmation.action_hash,
+    }));
+    void runCommand((signal) => confirmRuntimeRun(activeRun.runId, commandId, confirmation, projection.run_version, signal));
+  }, [activeRun, commandIdFor, projection, runCommand]);
+
+  const uploadFile = useCallback(async (file: File, declaration?: UploadDeclaration) => {
     const signal = lifecycleRef.current?.signal;
     setPendingUploads((current) => current.map((item) => item.file === file ? { ...item, declaration, status: 'uploading', error: undefined } : item));
     try {
@@ -279,25 +435,45 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
     } catch (error) {
       if (!signal?.aborted) setPendingUploads((current) => current.map((item) => item.file === file ? { ...item, status: 'error', error: (error as Error).message } : item));
     }
-  };
-  const upload = async (files: FileList | File[]) => {
+  }, []);
+
+  const upload = useCallback(async (files: FileList | File[]) => {
     const queued = Array.from(files);
     setPendingUploads((current) => [...current, ...queued.map((file) => ({ file, status: 'uploading' as const }))]);
     let index = 0;
     await Promise.all(Array.from({ length: Math.min(3, queued.length) }, async () => {
       while (index < queued.length && !lifecycleRef.current?.signal.aborted) await uploadFile(queued[index++]);
     }));
-  };
+  }, [uploadFile]);
+
+  const handleUseArtifact = useCallback((artifact: ArtifactSummary) => {
+    setSelectedInputs((current) => mergeArtifacts(current, [artifact]));
+    setMobilePane('chat');
+  }, []);
+
+  const handleWelcomeExample = useCallback((text: string) => {
+    composerRef.current?.setDraft(text);
+  }, []);
+
+  const handleWelcomeUpload = useCallback(() => {
+    composerRef.current?.openFilePicker();
+  }, []);
 
   const hasMessages = messages.length > 0;
-  const visibleArtifacts = mergeArtifacts(artifacts, pendingUploads.flatMap((upload) => upload.artifact ? [upload.artifact] : []));
-  const examples = isRunning || awaitingInput || uploadsBlocked || input.trim() ? [] : runtimeWorkflowExamples([
-    ...pendingUploads.flatMap(upload => upload.artifact ? [upload.artifact] : []), ...selectedInputs,
-  ]);
+  const visibleArtifacts = useMemo(
+    () => mergeArtifacts(artifacts, pendingUploads.flatMap((upload) => upload.artifact ? [upload.artifact] : [])),
+    [artifacts, pendingUploads],
+  );
+  const workflowArtifacts = useMemo(
+    () => [...pendingUploads.flatMap((upload) => upload.artifact ? [upload.artifact] : []), ...selectedInputs],
+    [pendingUploads, selectedInputs],
+  );
   const finalProjection = lastProjection?.status === 'completed' ? lastProjection : null;
-  const finalArtifacts = finalProjection?.output_artifacts.filter(artifact => finalProjection.final_artifact_ids?.includes(artifact.artifact_id)) ?? [];
-  const preferredArtifact = finalArtifacts.find(artifact => artifact.type === 'MapLayer')
-    ?? finalArtifacts.find(artifact => artifact.type === 'File') ?? finalArtifacts[0];
+  const finalArtifacts = finalProjection?.output_artifacts.filter((artifact) => finalProjection.final_artifact_ids?.includes(artifact.artifact_id)) ?? [];
+  const preferredArtifact = finalArtifacts.find((artifact) => artifact.type === 'MapLayer')
+    ?? finalArtifacts.find((artifact) => artifact.type === 'File') ?? finalArtifacts[0];
+  const displayProjection = projection ?? lastProjection;
+
   return <div className="runtime-workbench">
     <div className="workbench-toolbar">
       <div><span className="workbench-kicker">SPATIAL WORKSPACE</span><h1 className="mt-1 text-sm font-medium text-ink-100">空间分析工作台</h1></div>
@@ -306,19 +482,17 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
         <button type="button" aria-pressed={mobilePane === 'data'} onClick={() => setMobilePane('data')}>成果 <span>{visibleArtifacts.length}</span></button>
       </div></div>
     </div>
-    {recoveryError && <div role="alert" className="mx-4 mt-2 rounded border border-amber/40 bg-amber/10 p-2 text-xs text-amber">{recoveryError}<button type="button" onClick={() => setRecoveryRevision(value => value + 1)} className="ml-3 underline">重试恢复</button></div>}
+    {recoveryError && <div role="alert" className="mx-4 mt-2 rounded border border-amber/40 bg-amber/10 p-2 text-xs text-amber">{recoveryError}<button type="button" onClick={() => setRecoveryRevision((value) => value + 1)} className="ml-3 underline">重试恢复</button></div>}
     <div className="workbench-body" data-mobile-pane={mobilePane}>
     <aside className="workbench-artifacts" aria-label="空间成果工作区">
-      <ArtifactWorkspace key={sessionId} artifacts={visibleArtifacts} tasks={(projection ?? lastProjection)?.tasks} preferredArtifactId={preferredArtifact?.artifact_id} resultRunId={finalProjection?.run_id} disabled={isRunning || !!awaitingInput} onUse={(artifact) => {
-        setSelectedInputs((current) => mergeArtifacts(current, [artifact])); setMobilePane('chat');
-      }} />
+      <ArtifactWorkspace key={sessionId} artifacts={visibleArtifacts} tasks={displayProjection?.tasks} preferredArtifactId={preferredArtifact?.artifact_id} resultRunId={finalProjection?.run_id} disabled={isRunning || !!awaitingInput} onUse={handleUseArtifact} />
     </aside>
     <section className="workbench-chat" aria-label="Runtime 对话">
     <div ref={scroll.containerRef} className={hasMessages ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain' : 'flex min-h-0 flex-1 items-center justify-center overflow-y-auto'}>
-      {hasMessages ? <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">{messages.map((message) => <MessageBubble key={message.id} message={message} onBeforeMapLoad={scroll.beforeMutation} onAfterMapLoad={scroll.afterMutation} />)}</div> : <WelcomeHero onExample={setInput} onUpload={() => fileInputRef.current?.click()} />}
+      {hasMessages ? <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">{messages.map((message) => <MessageBubble key={message.id} message={message} onBeforeMapLoad={scroll.beforeMutation} onAfterMapLoad={scroll.afterMutation} />)}</div> : <WelcomeHero onExample={handleWelcomeExample} onUpload={handleWelcomeUpload} />}
     </div>
     <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
-      <RunStatusBar projection={projection ?? lastProjection} connectionState={activeRun ? runtime.connectionState : lastProjection ? 'closed' : 'idle'} terminalSettled={!activeRun && !!lastProjection && terminalRunStatuses.has(lastProjection.status)} />
+      <RunStatusBar projection={displayProjection} connectionState={activeRun ? runtime.connectionState : lastProjection ? 'closed' : 'idle'} terminalSettled={!activeRun && !!lastProjection && terminalRunStatuses.has(lastProjection.status)} />
     </div>
     <div className="workbench-composer"><div className="mx-auto w-full max-w-3xl px-4 py-3">
       {(commandError || runtime.error) && <div role="alert" className="mb-2 text-sm text-signal-error">{commandError ?? runtime.error?.message}{activeRun && <button type="button" onClick={() => { setCommandError(null); void runtime.connect(); }} className="ml-2 underline">重新连接</button>}</div>}
@@ -327,26 +501,119 @@ function RuntimeChatPanel({ sessionId, onSessionUpdate }: ChatPanelProps) {
       </div>}
       {confirmations.map((confirmation) => <div key={confirmation.confirmation_id} className="mb-2 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm text-ink-200"><p>{confirmation.action_summary ?? '任务 ' + confirmation.task_key + ' 需要你的确认后才能执行。'}</p><button type="button" disabled={submitting} onClick={() => confirm(confirmation)} className="mt-2 rounded bg-amber px-3 py-1 text-ink-950 disabled:opacity-50">确认执行 {confirmation.task_key}</button></div>)}
       <UploadTray uploads={pendingUploads} disabled={submitting} onRetry={(file, declaration) => void uploadFile(file, declaration)} onRemove={(file) => setPendingUploads((current) => current.filter((upload) => upload.file !== file))} />
-      {selectedInputs.length > 0 && <div aria-label="本轮选用的成果" className="mb-2 flex flex-wrap gap-2">{selectedInputs.map((artifact) => <span key={artifact.artifact_id} className="max-w-full rounded border border-amber/30 bg-amber/10 px-2 py-1 text-xs text-amber"><span className="break-all">{artifact.type} · {artifact.artifact_id}</span><button type="button" disabled={submitting} aria-label={'取消选用 ' + artifact.artifact_id} onClick={() => setSelectedInputs(current => current.filter(item => item.artifact_id !== artifact.artifact_id))} className="ml-2">×</button></span>)}</div>}
-      {examples.length > 0 && <div role="group" aria-label="工作流示例" className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-ink-400">工作流示例</span>
-        {examples.map(example => <button key={example.title} type="button" onClick={() => setInput(example.prompt)}
-          className="min-h-8 rounded-md border border-ink-600 px-2.5 text-xs text-ink-200 hover:border-amber hover:text-amber focus-visible:outline focus-visible:outline-amber">
-          {example.title}
-        </button>)}
-      </div>}
-      <div className="composer-field flex items-end gap-2 rounded-xl border border-ink-600 bg-ink-800 px-3 py-2">
-        <button type="button" onClick={() => fileInputRef.current?.click()} className="h-9 text-ink-400 hover:text-amber" aria-label="上传文件">＋</button>
-        <input ref={fileInputRef} className="hidden" type="file" multiple onChange={(event) => { if (event.target.files?.length) void upload(event.target.files); event.target.value = ''; }} />
-        <textarea aria-label="分析需求" value={input} onChange={(event) => { setInput(event.target.value); event.target.style.height = 'auto'; event.target.style.height = Math.min(event.target.scrollHeight, 160) + 'px'; }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} rows={1} disabled={isRunning || structuredInput} placeholder={awaitingInput ? '请输入补充信息' : '描述你的空间问题…'} className="max-h-[160px] min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-ink-100 placeholder:text-ink-400 focus:outline-none" />
-        {isRunning ? <button type="button" disabled={!projection || submitting} onClick={stop} className="h-9 rounded-lg border border-signal-error/40 px-3 text-sm text-signal-error">停止</button> : <button type="button" onClick={() => void send()} disabled={!input.trim() || structuredInput || uploadsBlocked} className="h-9 rounded-lg bg-amber px-3 text-sm font-medium text-ink-950 disabled:bg-ink-600 disabled:text-ink-400">{awaitingInput ? '回答并继续' : '发送'}</button>}
-      </div>
+      {selectedInputs.length > 0 && <div aria-label="本轮选用的成果" className="mb-2 flex flex-wrap gap-2">{selectedInputs.map((artifact) => <span key={artifact.artifact_id} className="max-w-full rounded border border-amber/30 bg-amber/10 px-2 py-1 text-xs text-amber"><span className="break-all">{artifact.type} · {artifact.artifact_id}</span><button type="button" disabled={submitting} aria-label={'取消选用 ' + artifact.artifact_id} onClick={() => setSelectedInputs((current) => current.filter((item) => item.artifact_id !== artifact.artifact_id))} className="ml-2">×</button></span>)}</div>}
+      <RuntimeComposer
+        ref={composerRef}
+        isRunning={isRunning}
+        submitting={submitting}
+        canStop={!!projection && !submitting}
+        awaitingInput={!!awaitingInput}
+        structuredInput={structuredInput}
+        uploadsBlocked={uploadsBlocked}
+        workflowArtifacts={workflowArtifacts}
+        onSend={send}
+        onStop={stop}
+        onUpload={upload}
+      />
       <div className="mt-2 flex items-center justify-between text-[10px] text-ink-400"><span>明确输入 · 可验证成果</span><span>Enter 发送 / Shift + Enter 换行</span></div>
     </div></div>
     </section>
     </div>
   </div>;
 }
+
+interface RuntimeComposerProps {
+  isRunning: boolean;
+  submitting: boolean;
+  canStop: boolean;
+  awaitingInput: boolean;
+  structuredInput: boolean;
+  uploadsBlocked: boolean;
+  workflowArtifacts: ArtifactSummary[];
+  onSend: (text: string) => Promise<void>;
+  onStop: () => void;
+  onUpload: (files: FileList | File[]) => Promise<void>;
+}
+
+const RuntimeComposer = memo(forwardRef<RuntimeComposerHandle, RuntimeComposerProps>(function RuntimeComposer({
+  isRunning,
+  canStop,
+  awaitingInput,
+  structuredInput,
+  uploadsBlocked,
+  workflowArtifacts,
+  onSend,
+  onStop,
+  onUpload,
+}, ref) {
+  const [input, setInput] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    setDraft(text: string) {
+      setInput(text);
+    },
+    clearDraft() {
+      setInput('');
+    },
+    openFilePicker() {
+      fileInputRef.current?.click();
+    },
+  }), []);
+
+  // Reset or size textarea inline height whenever input changes (typed, cleared, or set via example).
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    if (input) {
+      el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+    }
+  }, [input]);
+
+  const examples = useMemo(
+    () => (isRunning || awaitingInput || uploadsBlocked || input.trim() ? [] : runtimeWorkflowExamples(workflowArtifacts)),
+    [isRunning, awaitingInput, uploadsBlocked, input, workflowArtifacts],
+  );
+
+  return (
+    <>
+      {examples.length > 0 && <div role="group" aria-label="工作流示例" className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-ink-400">工作流示例</span>
+        {examples.map((example) => <button key={example.title} type="button" onClick={() => setInput(example.prompt)}
+          className="min-h-8 rounded-md border border-ink-600 px-2.5 text-xs text-ink-200 hover:border-amber hover:text-amber focus-visible:outline focus-visible:outline-amber">
+          {example.title}
+        </button>)}
+      </div>}
+      <div className="composer-field flex items-end gap-2 rounded-xl border border-ink-600 bg-ink-800 px-3 py-2">
+        <button type="button" onClick={() => fileInputRef.current?.click()} className="h-9 text-ink-400 hover:text-amber" aria-label="上传文件">＋</button>
+        <input ref={fileInputRef} className="hidden" type="file" multiple onChange={(event) => { if (event.target.files?.length) void onUpload(event.target.files); event.target.value = ''; }} />
+        <textarea
+          ref={textareaRef}
+          aria-label="分析需求"
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void onSend(input);
+            }
+          }}
+          rows={1}
+          disabled={isRunning || structuredInput}
+          placeholder={awaitingInput ? '请输入补充信息' : '描述你的空间问题…'}
+          className="max-h-[160px] min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-ink-100 placeholder:text-ink-400 focus:outline-none"
+        />
+        {isRunning ? (
+          <button type="button" disabled={!canStop} onClick={onStop} className="h-9 rounded-lg border border-signal-error/40 px-3 text-sm text-signal-error">停止</button>
+        ) : (
+          <button type="button" onClick={() => void onSend(input)} disabled={!input.trim() || structuredInput || uploadsBlocked} className="h-9 rounded-lg bg-amber px-3 text-sm font-medium text-ink-950 disabled:bg-ink-600 disabled:text-ink-400">{awaitingInput ? '回答并继续' : '发送'}</button>
+        )}
+      </div>
+    </>
+  );
+}));
 
 function WelcomeHero({ onExample, onUpload }: { onExample: (text: string) => void; onUpload: () => void }) {
   return <div className="welcome-atelier">

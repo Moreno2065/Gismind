@@ -39,7 +39,7 @@ POLICY_CODE = "INDEPENDENT_HISTORY_READONLY"
 OBSERVER_SERVICE_VERSION = "history-readonly-observer-v2"
 SESSION_SELECTOR_HEADER = "X-History-Observer-Session"
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}")
-_GET_PATH = re.compile(r"^/api/(?:health|sessions(?:/[^/]+(?:/(?:messages|runs))?)?|runs/[^/]+(?:/events)?|artifacts/[^/]+(?:/content)?)$")
+_GET_PATH = re.compile(r"^/api/(?:health|sessions(?:/[^/]+(?:/(?:messages|runs))?)?|runs/[^/]+(?:/events)?|artifacts/[^/]+(?:/(?:content|raster-preview))?)$")
 _EGRESS_LOCK = threading.RLock()
 
 
@@ -292,9 +292,7 @@ def create_history_app(clone_root: str | Path):
             if rows is None:
                 return JSONResponse({"error": {"code": "HISTORY_OBSERVER_SESSION_NOT_FOUND", "message": "Selected historical session is unknown or deleted in this independent observer clone"}}, status_code=404, headers=projection_headers)
             projection_headers[SESSION_SELECTOR_HEADER] = selected_id
-            # Current Runtime has no persisted title column. Preserve its exact
-            # public title constant; do not infer or fabricate a historical title.
-            items = [{"id": row["session_id"], "title": "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]} for row in rows]
+            items = [{"id": row["session_id"], "title": row.get("title") or "新会话", "created_at": row["created_at"], "updated_at": row["updated_at"]} for row in rows]
             return JSONResponse({"items": items}, headers=projection_headers)
         if request.method == "HEAD":
             request.scope["method"] = "GET"

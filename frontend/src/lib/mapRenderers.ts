@@ -6,15 +6,93 @@ import { sourceStyle, featureSource } from './sourceStyle';
 import type { GeoJSONFeature, MapLayer } from '@/types/message';
 
 export interface AMapOverlayLike {
-  setMap(map: any): void;
+  setMap(map: AMapMapLike | null): void;
 }
 
-// Reuse a single InfoWindow to avoid leaking instances on every marker click.
-let _sharedInfoWindow: any = null;
+export interface AMapMarkerLike extends AMapOverlayLike {
+  on(event: string, handler: () => void): void;
+  getMap(): AMapMapLike | null;
+  getPosition(): unknown;
+}
 
-function getSharedInfoWindow(AMap: any, content: string, offset?: any): any {
+export interface AMapInfoWindowLike {
+  setContent(content: string): void;
+  open(map: AMapMapLike | null, position: unknown): void;
+  close?: () => void;
+}
+
+export interface AMapMapLike {
+  setBounds(bounds: unknown, immediately?: boolean, avoid?: number[]): void;
+  destroy?: () => void;
+}
+
+export interface AMapMarkerOptions {
+  position: [number, number];
+  content: string;
+  offset: unknown;
+  anchor: string;
+}
+
+export interface AMapPolylineOptions {
+  path: [number, number][];
+  strokeColor: string;
+  strokeWeight: number;
+  strokeOpacity?: number;
+  lineJoin?: string;
+}
+
+export interface AMapPolygonOptions {
+  path: [number, number][][];
+  fillColor: string;
+  fillOpacity: number;
+  strokeColor: string;
+  strokeWeight: number;
+}
+
+export interface AMapImageOverlayOptions {
+  url: string;
+  bounds: unknown;
+  opacity: number;
+}
+
+export interface AMapSdkLike {
+  Marker: new (options: AMapMarkerOptions) => AMapMarkerLike;
+  Polyline: new (options: AMapPolylineOptions) => AMapOverlayLike;
+  Polygon: new (options: AMapPolygonOptions) => AMapOverlayLike;
+  ImageOverlay: new (options: AMapImageOverlayOptions) => AMapOverlayLike;
+  InfoWindow: new (options: { content: string; offset?: unknown }) => AMapInfoWindowLike;
+  Pixel: new (x: number, y: number) => unknown;
+  LngLat: new (lng: number, lat: number) => unknown;
+  Bounds: new (sw: unknown, ne: unknown) => unknown;
+}
+
+// Reuse a single InfoWindow per map instance to avoid leaking instances on every marker click.
+let _sharedInfoWindow: AMapInfoWindowLike | null = null;
+let _sharedInfoWindowMap: AMapMapLike | null = null;
+
+export function resetSharedInfoWindow(map?: AMapMapLike | null): void {
+  if (map && _sharedInfoWindowMap && _sharedInfoWindowMap !== map) return;
+  try {
+    _sharedInfoWindow?.close?.();
+  } catch {
+    /* noop */
+  }
+  _sharedInfoWindow = null;
+  _sharedInfoWindowMap = null;
+}
+
+function getSharedInfoWindow(
+  AMap: AMapSdkLike,
+  map: AMapMapLike | null,
+  content: string,
+  offset?: unknown,
+): AMapInfoWindowLike {
+  if (_sharedInfoWindow && _sharedInfoWindowMap !== map) {
+    resetSharedInfoWindow();
+  }
   if (!_sharedInfoWindow) {
     _sharedInfoWindow = new AMap.InfoWindow({ content, offset });
+    _sharedInfoWindowMap = map;
   }
   _sharedInfoWindow.setContent(content);
   return _sharedInfoWindow;
@@ -22,7 +100,7 @@ function getSharedInfoWindow(AMap: any, content: string, offset?: any): any {
 
 /** 把单个 GeoJSON Feature 转 AMap 覆盖物（统一返回带 setMap 的对象） */
 export function featureToOverlay(
-  AMap: any,
+  AMap: AMapSdkLike,
   feature: GeoJSONFeature,
   layerStyle?: Record<string, unknown>,
 ): AMapOverlayLike | null {
@@ -31,38 +109,37 @@ export function featureToOverlay(
   const geom = feature.geometry;
   if (!geom) return null;
 
-  const props = feature.properties ?? {};
-  const popup = buildPopup(props);
-
-  const makeMarker = (coord: number[]) => {
-    const m = new AMap.Marker({
-      position: [coord[0], coord[1]],
-      content: markerDom(st.color, st.glow),
-      offset: new AMap.Pixel(-8, -8),
-      anchor: 'center',
-    });
-    if (popup) {
-      m.on('click', () => {
-        const info = getSharedInfoWindow(AMap, popup, new AMap.Pixel(0, -16));
-        info.open(m.getMap() ?? null, m.getPosition());
+  if (geom.type === 'Point' || geom.type === 'MultiPoint') {
+    const popup = buildPopup(feature.properties ?? {});
+    const makeMarker = (coord: number[]) => {
+      const m = new AMap.Marker({
+        position: [coord[0], coord[1]],
+        content: markerDom(st.color, st.glow),
+        offset: new AMap.Pixel(-8, -8),
+        anchor: 'center',
       });
+      if (popup) {
+        m.on('click', () => {
+          const ownerMap = m.getMap() ?? null;
+          const info = getSharedInfoWindow(AMap, ownerMap, popup, new AMap.Pixel(0, -16));
+          info.open(ownerMap, m.getPosition());
+        });
+      }
+      return m;
+    };
+
+    if (geom.type === 'Point') {
+      return makeMarker(geom.coordinates as number[]);
     }
-    return m;
-  };
 
-  if (geom.type === 'Point') {
-    return makeMarker(geom.coordinates as number[]);
-  }
-
-  if (geom.type === 'MultiPoint') {
     const markers = (geom.coordinates as number[][]).map((c) => makeMarker(c));
     return {
-      setMap: (map: any) => markers.forEach((m) => m.setMap(map)),
+      setMap: (map: AMapMapLike | null) => markers.forEach((m) => m.setMap(map)),
     };
   }
 
   if (geom.type === 'LineString') {
-    const path = (geom.coordinates as number[][]).map((c) => [c[0], c[1]]);
+    const path = (geom.coordinates as number[][]).map((c): [number, number] => [c[0], c[1]]);
     return new AMap.Polyline({
       path,
       strokeColor: (layerStyle?.stroke_color as string) ?? st.color,
@@ -75,7 +152,7 @@ export function featureToOverlay(
   if (geom.type === 'MultiLineString') {
     const polylines = (geom.coordinates as number[][][]).map((line) =>
       new AMap.Polyline({
-        path: line.map((c) => [c[0], c[1]]),
+        path: line.map((c): [number, number] => [c[0], c[1]]),
         strokeColor: (layerStyle?.stroke_color as string) ?? st.color,
         strokeWeight: (layerStyle?.stroke_width as number) ?? 3,
         strokeOpacity: 0.9,
@@ -83,12 +160,14 @@ export function featureToOverlay(
       }),
     );
     return {
-      setMap: (map: any) => polylines.forEach((p) => p.setMap(map)),
+      setMap: (map: AMapMapLike | null) => polylines.forEach((p) => p.setMap(map)),
     };
   }
 
   if (geom.type === 'Polygon') {
-    const paths = (geom.coordinates as number[][][]).map((ring) => ring.map((c) => [c[0], c[1]]));
+    const paths = (geom.coordinates as number[][][]).map((ring) =>
+      ring.map((c): [number, number] => [c[0], c[1]]),
+    );
     return new AMap.Polygon({
       path: paths,
       fillColor: (layerStyle?.fill_color as string) ?? st.color,
@@ -101,7 +180,7 @@ export function featureToOverlay(
   if (geom.type === 'MultiPolygon') {
     const polygons = (geom.coordinates as number[][][][]).map((poly) =>
       new AMap.Polygon({
-        path: poly.map((ring) => ring.map((c) => [c[0], c[1]])),
+        path: poly.map((ring) => ring.map((c): [number, number] => [c[0], c[1]])),
         fillColor: (layerStyle?.fill_color as string) ?? st.color,
         fillOpacity: (layerStyle?.fill_opacity as number) ?? st.opacity * 0.4,
         strokeColor: (layerStyle?.stroke_color as string) ?? st.color,
@@ -109,7 +188,7 @@ export function featureToOverlay(
       }),
     );
     return {
-      setMap: (map: any) => polygons.forEach((p) => p.setMap(map)),
+      setMap: (map: AMapMapLike | null) => polygons.forEach((p) => p.setMap(map)),
     };
   }
 
@@ -142,13 +221,13 @@ export function escapeHtml(s: string): string {
  * Shared between LazyMapView and FullscreenMap to avoid duplicated overlay creation logic.
  */
 export function renderLayersOnMap(
-  map: any,
-  AMap: any,
+  map: AMapMapLike,
+  AMap: AMapSdkLike,
   layers: MapLayer[],
   bbox: [number, number, number, number],
   options?: { padding?: number[] },
-): any[] {
-  const overlays: any[] = [];
+): AMapOverlayLike[] {
+  const overlays: AMapOverlayLike[] = [];
 
   for (const layer of layers) {
     if (layer.type === 'FeatureCollection') {
@@ -182,13 +261,15 @@ export function renderLayersOnMap(
     } else if (layer.type === 'polygon') {
       for (const polygon of layer.coordinates) {
         try {
-          const paths = polygon.map((ring: number[][]) => ring.map((c) => [c[0], c[1]]));
+          const paths = polygon.map((ring: number[][]) =>
+            ring.map((c): [number, number] => [c[0], c[1]]),
+          );
           const p = new AMap.Polygon({
             path: paths,
             fillColor: layer.fill_color ?? '#ff7a1a',
             fillOpacity: layer.fill_opacity ?? 0.25,
             strokeColor: (layer.style?.stroke_color as string | undefined) ?? '#ff7a1a',
-            strokeWidth: (layer.style?.stroke_width as number | undefined) ?? 1.5,
+            strokeWeight: (layer.style?.stroke_width as number | undefined) ?? 1.5,
           });
           p.setMap(map);
           overlays.push(p);
@@ -199,7 +280,7 @@ export function renderLayersOnMap(
     } else if (layer.type === 'polyline') {
       for (const line of layer.coordinates) {
         try {
-          const path = line.map((c) => [c[0], c[1]]);
+          const path = line.map((c): [number, number] => [c[0], c[1]]);
           const pl = new AMap.Polyline({
             path,
             strokeColor: layer.stroke_color ?? '#FF6B35',

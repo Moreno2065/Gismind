@@ -811,8 +811,8 @@ _PLANNER_HINTS: dict[str, dict[str, Any]] = {
     },
     "io.read_upload": {"note": "Its File input is already a Runtime Artifact; do not invent a legacy upload identifier."},
     "code.execute": {
-        "example_params": {"source_code": "result = {'status': 'success', 'data': 'computed'}"},
-        "note": "Declare source_code in params. The Runtime derives source_code_hash; never fabricate it.",
+        "example_params": {"source_code": "__result__ = {'status': 'success', 'data': 'computed'}"},
+        "note": "Declare source_code in params and assign the output to __result__. The Runtime derives source_code_hash; never fabricate it.",
     },
 }
 

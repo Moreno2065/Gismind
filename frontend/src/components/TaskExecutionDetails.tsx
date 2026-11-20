@@ -5,14 +5,24 @@ export function runtimeTaskAnchor(taskId: string) {
   return `runtime-task-${encodeURIComponent(taskId)}`;
 }
 
-function ArtifactLink({ artifactId }: { artifactId: string }) {
-  return <a href={runtimeArtifactContentUrl({ artifact_id: artifactId })} download
+function artifactDownloadName(artifactId: string, portName?: string): string {
+  const safeBase = artifactId.replace(/[\\/]+/g, '_');
+  if (/\.[a-z0-9]{1,8}$/i.test(safeBase)) return safeBase;
+  const port = portName?.toLowerCase() ?? '';
+  if (port.includes('raster') || port.includes('dem')) return `${safeBase}.tif`;
+  if (port.includes('vector') || port.includes('geojson')) return `${safeBase}.geojson`;
+  if (port.includes('map') || port.includes('poi') || port.includes('table') || port.includes('stat')) return `${safeBase}.json`;
+  return safeBase;
+}
+
+function ArtifactLink({ artifactId, portName }: { artifactId: string; portName?: string }) {
+  return <a href={runtimeArtifactContentUrl({ artifact_id: artifactId })} download={artifactDownloadName(artifactId, portName)}
     className="break-all text-amber underline decoration-amber/40 underline-offset-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber">{artifactId}</a>;
 }
 
 function ArtifactRows({ items }: { items: TaskArtifactReference[] }) {
   return <ul className="space-y-1">{items.map((item) => <li key={`${item.name}:${item.ordinal}`}>
-    <span className="font-mono text-ink-400">{item.name}[{item.ordinal}] → </span><ArtifactLink artifactId={item.artifact_id} />
+    <span className="font-mono text-ink-400">{item.name}[{item.ordinal}] → </span><ArtifactLink artifactId={item.artifact_id} portName={item.name} />
   </li>)}</ul>;
 }
 
@@ -36,7 +46,7 @@ export function TaskExecutionDetails({ task }: { task: RunTaskProjection }) {
       <div><p className="mb-1 text-ink-500">输入与命名端口</p>
         {details.inputs.length ? <ul className="space-y-1">{details.inputs.map((input) => <li key={`${input.name}:${input.ordinal}`}>
           <span className="font-mono text-ink-400">{input.name} → </span>
-          {input.artifact_id ? <ArtifactLink artifactId={input.artifact_id} /> : <span className="font-mono">{`${input.source_task_key ?? input.source_task_id}.${input.source_port}[${input.selection === 'all' ? '*' : input.source_ordinal ?? 0}]`}</span>}
+          {input.artifact_id ? <ArtifactLink artifactId={input.artifact_id} portName={input.name} /> : <span className="font-mono">{`${input.source_task_key ?? input.source_task_id}.${input.source_port}[${input.selection === 'all' ? '*' : input.source_ordinal ?? 0}]`}</span>}
         </li>)}</ul> : <p className="text-ink-400">无绑定输入</p>}
       </div>
       {details.resolved_inputs.length > 0 && <div><p className="mb-1 text-ink-500">已解析输入</p><ArtifactRows items={details.resolved_inputs} /></div>}

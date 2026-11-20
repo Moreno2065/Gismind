@@ -6,9 +6,9 @@
 //   - 不可见时 destroy 释放内存，显示"地图已休眠"占位
 //   - 右上角全屏展开按钮 → FullscreenMap
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { loadAMap } from '@/lib/amap';
-import { renderLayersOnMap } from '@/lib/mapRenderers';
+import { renderLayersOnMap, resetSharedInfoWindow } from '@/lib/mapRenderers';
 import { sourceStyle, featureSource } from '@/lib/sourceStyle';
 import { countFeatures, normalizeBbox } from '@/lib/utils';
 import { RasterOverlay } from './RasterOverlay';
@@ -70,7 +70,7 @@ function observeMapGeometry(map: any, sourceArtifactId?: string): MapRenderEvide
   }
 }
 
-export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifactId, onBeforeLoad, onAfterLoad }: LazyMapViewProps) {
+function LazyMapViewImpl({ layers, bbox, expired, featureCount, sourceArtifactId, onBeforeLoad, onAfterLoad }: LazyMapViewProps) {
   const safeBbox = normalizeBbox(bbox);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -78,7 +78,7 @@ export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifac
   const overlaysRef = useRef<any[]>([]);
   const layersRef = useRef(layers);
   const bboxRef = useRef(safeBbox);
-  const prevLayersJsonRef = useRef(JSON.stringify(layers));
+  const prevLayersJsonRef = useRef<string | null>(null);
   const sourceArtifactRef = useRef(sourceArtifactId);
   const prevSourceArtifactRef = useRef(sourceArtifactId);
   const loadingRef = useRef(false);
@@ -95,6 +95,7 @@ export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifac
   sourceArtifactRef.current = sourceArtifactId;
 
   const destroyMap = useCallback(() => {
+    resetSharedInfoWindow(mapRef.current);
     for (const overlay of overlaysRef.current) {
       try { overlay.setMap?.(null); } catch { /* noop */ }
     }
@@ -102,6 +103,7 @@ export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifac
     try { mapRef.current?.destroy(); } catch { /* noop */ }
     mapRef.current = null;
     AMapRef.current = null;
+    prevLayersJsonRef.current = null;
   }, []);
 
   // 1. 监听是否进入视口
@@ -132,6 +134,8 @@ export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifac
     const nonRasterLayers = layersRef.current.filter((l) => l.type !== 'raster');
     const newOverlays = renderLayersOnMap(map, AMap, nonRasterLayers, bboxRef.current);
     overlaysRef.current = newOverlays;
+    prevLayersJsonRef.current = JSON.stringify(layersRef.current);
+    prevSourceArtifactRef.current = sourceArtifactRef.current;
     setRenderEvidence(observeMapGeometry(map, sourceArtifactRef.current));
   }, []);
 
@@ -316,6 +320,8 @@ export function LazyMapView({ layers, bbox, expired, featureCount, sourceArtifac
     </>
   );
 }
+
+export const LazyMapView = memo(LazyMapViewImpl);
 
 // ---------------------------------------------------------------------------
 // 视觉子组件

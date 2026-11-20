@@ -40,14 +40,16 @@ do not describe an unimplemented target as current behavior.
 
 Artifact metadata identity is independent from CAS bytes: v11 removes the
 unique `content_hash` constraint, new records use `art_*` IDs, and a shared
-blob may back multiple immutable typed Artifacts. Runtime APIs accept
-`artifact_id`, never an arbitrary content hash. GC protects the complete
-shared-blob group while any sibling is reachable or leased.
+blob may back multiple immutable typed Artifacts. Migration v12 adds persisted
+`sessions.title`. Runtime APIs accept `artifact_id`, never an arbitrary content
+hash. GC protects the complete shared-blob group while any sibling is reachable
+or leased.
 
 Uploads are streamed in 1 MiB chunks into bounded staging. `UPLOAD_MAX_SIZE`
-is enforced before CAS publication; ZIP uploads additionally enforce member
-count, cumulative uncompressed size, path-traversal and compression-ratio
-limits.
+is enforced before CAS publication; `upload_inspection.py` inspects uploaded
+files in a killable subprocess (validating format, physical CRS/bounds against
+user declarations, and ZIP member count, actual extracted byte total,
+path-traversal and compression-ratio limits).
 
 ## Working rules
 
@@ -91,6 +93,7 @@ uvicorn app.main:app --reload
 ```powershell
 cd frontend
 npm run typecheck
+npm run test
 npm run build
 npm run dev
 ```
@@ -100,20 +103,24 @@ npm run dev
 | Area | Current location |
 |---|---|
 | Public Runtime API and SSE | `backend/app/api/runtime.py` |
-| SQLite facts, transitions and events | `backend/app/runtime/store.py`, `db.py` |
-| CAS, staging, validation and GC | `backend/app/runtime/artifacts.py` |
-| Planner provider boundary | `backend/app/runtime/llm_planner.py` |
-| Draft -> PlanIR compiler | `backend/app/runtime/compiler.py` |
-| Tool contracts | `backend/app/runtime/contracts.py` |
-| Durable leases, Worker and process isolation | `backend/app/runtime/queue.py`, `process.py` |
+| SQLite facts, transitions and events | `backend/app/runtime/store.py`, `db.py`, `migrations.py` |
+| CAS, staging, validation and GC | `backend/app/runtime/artifacts.py`, `upload_inspection.py` |
+| Raster preview subprocess projection | `backend/app/runtime/raster_preview.py` |
+| Planner provider boundary & budget control | `backend/app/runtime/llm_planner.py`, `planning_control.py` |
+| Draft -> PlanIR compiler & goal checks | `backend/app/runtime/compiler.py`, `goal_requirements.py` |
+| Tool contracts & postconditions | `backend/app/runtime/contracts.py`, `postconditions.py`, `aggregate_postconditions.py` |
+| Durable leases, Worker and process isolation | `backend/app/runtime/queue.py`, `process.py`, `supervisor.py` |
 | Deterministic GIS adapters | `backend/app/runtime/tool_handlers.py` |
 | Runtime event reducer | `frontend/src/hooks/useRuntimeRun.ts` |
-| Runtime chat/map/artifact UI | `frontend/src/components/ChatPanel.tsx` |
+| Runtime chat/map/artifact UI | `frontend/src/components/ChatPanel.tsx`, `ArtifactWorkspace.tsx`, `ArtifactRasterMap.tsx` |
+| Workflow examples | `frontend/src/lib/runtimeWorkflowExamples.ts` |
 
 ## Verification standard
 
 Before claiming a change complete, run the narrow regression that proves the
 reported defect, then the relevant Runtime integration tests. For any code
 change touching backend Runtime or frontend behavior, finish with full backend
-pytest and frontend typecheck/build unless a concrete external blocker prevents
-it. Report warnings separately from assertion failures.
+pytest, `python -m app.runtime.gate --phase post-delete`, and frontend
+`npm run typecheck`, `npm run test`, and `npm run build` unless a concrete
+external blocker prevents it. Report warnings separately from assertion
+failures.

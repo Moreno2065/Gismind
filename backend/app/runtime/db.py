@@ -355,9 +355,8 @@ class RuntimeDB:
             conn = sqlite3.connect(str(self.path), timeout=30, isolation_level=None)
         try:
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("PRAGMA synchronous=NORMAL")
             return conn
         except BaseException:
@@ -367,6 +366,9 @@ class RuntimeDB:
             raise
 
     def initialize(self) -> None:
+        if not self._memory_uri and str(self.path) != ":memory:":
+            with self.connection() as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
         with self.transaction() as conn:
             # Do not use executescript here: sqlite3 commits implicitly before
             # executescript, which would make a failed migration partial.
@@ -428,11 +430,35 @@ class RuntimeDB:
             conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
-        except Exception:
-            conn.rollback()
+        except BaseException:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
             raise
         finally:
             self._local.connection = None
+            conn.close()
+
+    @contextmanager
+    def read_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Yield a consistent read-only snapshot transaction without taking the write lock."""
+        existing = getattr(self._local, "connection", None)
+        if existing is not None:
+            yield existing
+            return
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN DEFERRED")
+            yield conn
+            conn.commit()
+        except BaseException:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
             conn.close()
 
     @property

@@ -2,10 +2,10 @@
 // 全屏地图弹窗 — 接收相同 layers 数据，支持更完整交互。
 // 复用 LazyMapView 的渲染逻辑但始终加载（无懒加载/无休眠）。
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { loadAMap } from '@/lib/amap';
-import { renderLayersOnMap } from '@/lib/mapRenderers';
+import { renderLayersOnMap, resetSharedInfoWindow } from '@/lib/mapRenderers';
 import type { MapLayer } from '@/types/message';
 
 interface FullscreenMapProps {
@@ -16,44 +16,69 @@ interface FullscreenMapProps {
 
 export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const mapRef = useRef<any>(null);
+  const AMapRef = useRef<any>(null);
   const overlaysRef = useRef<any[]>([]);
+  const layersRef = useRef(layers);
+  const bboxRef = useRef(bbox);
+  const prevSigRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // Esc 关闭
+  layersRef.current = layers;
+  bboxRef.current = bbox;
+
+  const destroyMap = useCallback(() => {
+    resetSharedInfoWindow(mapRef.current);
+    for (const overlay of overlaysRef.current) {
+      try { overlay.setMap?.(null); } catch { /* noop */ }
+    }
+    overlaysRef.current = [];
+    try { mapRef.current?.destroy(); } catch { /* noop */ }
+    mapRef.current = null;
+    AMapRef.current = null;
+    prevSigRef.current = null;
+  }, []);
+
+  const renderLayers = useCallback((map: any, AMap: any) => {
+    for (const overlay of overlaysRef.current) {
+      try { overlay.setMap?.(null); } catch { /* noop */ }
+    }
+    overlaysRef.current = [];
+    overlaysRef.current = renderLayersOnMap(map, AMap, layersRef.current, bboxRef.current, { padding: [80, 80, 80, 80] });
+    prevSigRef.current = JSON.stringify({ layers: layersRef.current, bbox: bboxRef.current });
+  }, []);
+
+  // Esc 关闭 + body 滚动锁定 + 关闭后恢复焦点
   useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    // 锁定 body 滚动
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
+      previousFocus?.focus?.();
     };
   }, [onClose]);
 
+  // 仅在挂载或显式重试时初始化 AMap 实例，避免父级引用变更销毁重建地图
   useEffect(() => {
     let cancelled = false;
-    const destroyMap = () => {
-      for (const overlay of overlaysRef.current) {
-        try { overlay.setMap?.(null); } catch { /* noop */ }
-      }
-      overlaysRef.current = [];
-      try { mapRef.current?.destroy(); } catch { /* noop */ }
-      mapRef.current = null;
-    };
     loadingRef.current = true;
     setLoading(true);
     setError(null);
     loadAMap()
       .then((AMap: any) => {
         if (cancelled || !containerRef.current) return;
+        AMapRef.current = AMap;
         const map = new AMap.Map(containerRef.current, {
           zoom: 13,
           mapStyle: 'amap://styles/dark',
@@ -65,7 +90,7 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
         map.addControl(new AMap.Scale());
         map.addControl(new AMap.ToolBar({ position: 'RB' }));
 
-        overlaysRef.current = renderLayersOnMap(map, AMap, layers, bbox, { padding: [80, 80, 80, 80] });
+        renderLayers(map, AMap);
         loadingRef.current = false;
         setLoading(false);
       })
@@ -83,7 +108,15 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
       loadingRef.current = false;
       destroyMap();
     };
-  }, [layers, bbox, loadAttempt]);
+  }, [loadAttempt, destroyMap, renderLayers]);
+
+  // layers 或 bbox 内容真实变化时原地更新覆盖物
+  useEffect(() => {
+    if (!mapRef.current || !AMapRef.current) return;
+    const sig = JSON.stringify({ layers, bbox });
+    if (sig === prevSigRef.current) return;
+    renderLayers(mapRef.current, AMapRef.current);
+  }, [layers, bbox, renderLayers]);
 
   const retryLoad = () => {
     if (loadingRef.current || !error) return;
@@ -96,7 +129,12 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
   const hasHeatmap = layers.some((l) => l.type === 'heatmap');
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink-950 backdrop-blur-md animate-fade-in">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="全屏空间分析地图"
+      className="fixed inset-0 z-50 flex flex-col bg-ink-950 backdrop-blur-md animate-fade-in"
+    >
       <div className="flex items-center justify-between border-b border-ink-700 px-5 py-3">
         <div className="flex items-baseline gap-3">
           <span className="font-display text-lg text-ink-100">空间分析地图</span>
@@ -105,6 +143,7 @@ export function FullscreenMap({ layers, bbox, onClose }: FullscreenMapProps) {
           </span>
         </div>
         <button
+          ref={closeButtonRef}
           type="button"
           onClick={onClose}
           className="flex h-9 items-center gap-2 rounded-md border border-ink-600 px-3 text-sm text-ink-200 transition hover:border-signal-error hover:text-signal-error"

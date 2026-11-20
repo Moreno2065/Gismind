@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { RunProjectionState } from '@/types/runtime';
 import { runtimeTaskAnchor, TaskExecutionDetails } from './TaskExecutionDetails';
 
@@ -59,7 +59,7 @@ function DiagnosticActions({ projection, path }: { projection: RunProjectionStat
   </div>;
 }
 
-export function RunStatusBar({ projection, connectionState, terminalSettled }: RunStatusBarProps) {
+function RunStatusBarImpl({ projection, connectionState, terminalSettled }: RunStatusBarProps) {
   if (!projection && connectionState === 'idle') return null;
   const tasks = projection?.tasks ?? [];
   const planning = projection?.planning_attempts ?? [];
@@ -132,3 +132,5 @@ export function RunStatusBar({ projection, connectionState, terminalSettled }: R
     </div>}
   </section>;
 }
+
+export const RunStatusBar = memo(RunStatusBarImpl);

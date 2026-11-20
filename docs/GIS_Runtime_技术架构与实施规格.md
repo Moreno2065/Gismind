@@ -1,8 +1,8 @@
 # Gismind GIS Runtime 技术架构与实施规格
 
 > 文档状态：Runtime 主链已实施；未标注“已实施”的条目仍是后续规格
-> 文档版本：1.19
-> 日期：2026-11-03
+> 文档版本：1.20
+> 日期：2026-11-19
 > 适用范围：Gismind 单机版下一代运行内核
 > 兼容策略：破坏性升级，不兼容旧会话、旧 checkpoint、旧 TaskPlan 与旧 SSE 传输契约
 
@@ -133,6 +133,17 @@ Vector 发布前现使用既有 CRS 契约核对声明，并比较 JSON 中显�
 随后依照用户新授权，通过 `tests.live.runtime_small_e2e` 实际调用 `deepseek-flash`，验证上传 API、持久化规划、Compiler、隔离 Worker、成果下载和独立物理读取。首轮四例为 **3 passed、1 failed**：缺 CRS 矢量恢复、缺 CRS 栅格恢复、筛选后 100 米缓冲均通过；“计算附件 DEM 的坡度，单位为度，输出 GeoTIFF”因交付动词识别遗漏“输出”而被误按矢量导出格式拒绝。现统一使用 Compiler 已有的交付动词识别，保留最终非空、带 CRS 的 Raster 数据流约束及非 TIFF 格式拒绝。六条新增回归连同原套件为 **44 passed**。只复测失败的坡度案例后通过，Rasterio 核对全部像元为解析解 45°，网格和 EPSG:3857 不变。缓冲结果由独立 Shapely 几何核对，最大 Hausdorff 误差约 `1.17e-10 m`；缺 CRS 两例的原始上传元数据与下载 bytes 不变。
 
 本次真实验证共八个已结算 Provider 请求，费用账本增加 **USD 0.014206920**；总占用 **USD 15.832222428 / 20**，仍保留原十三笔未知结果预留、无 pending。原首轮与单例复测结果分别保存在 `.gismind/small-live-e2e-20261103-01`、`-02`，未覆盖失败记录。这是四个限定案例的实际结果，包含一次修复后复测，不是新的总体成功率或历史 1800 地图重验。
+
+### 1.8 2026-11-19 栅格预览工作台、安全加固与文档代码对齐（当前实现）
+
+- **栅格预览与工作流示例（提交 `2630949`）**：新增 `backend/app/runtime/raster_preview.py` 与 `GET /api/artifacts/{artifact_id}/raster-preview` 受限子进程预览链路（单槽位租约保护、WGS84 `bbox` 与透明 PNG），裁剪结果保留 GeoTIFF 内部有效掩膜；前端新增 `ArtifactRasterMap.tsx`、可编辑工作流示例（`runtimeWorkflowExamples.ts`）和 100 行分页属性浏览。
+- **后端安全、重试与并发修复**：
+  - `code.execute` 沙箱改为私有临时目录文件传递代码与输入（消除命令行长度上限与二次 Base64），构建白名单环境变量以隔离宿主机密钥，清理 `sitecustomize_gismind` 宿主机模块引用并封锁 `open`/UDP `sendto`/DNS 绕过，扩展 AST/Compiler 禁名集，补齐 Unix `start_new_session` / `rlimit` 和 64 位 Windows `ctypes` 句柄类型签名；`code.execute` 现保留 `raw_bytes` 以支持 JSON/GeoJSON `File` 输入，Planner 提示修正为 `__result__`。
+  - 修复 `RuntimeExecutor` 在可重试错误上抢先标 `failed` 导致 `RuntimeQueue.schedule_retry` 失效和 `task_attempts` 滞留 `running` 的缺陷。
+  - `RuntimeDB` 新增 `BEGIN DEFERRED` 只读事务供 `get_run_snapshot()` 使用（消除高频 SSE 轮询争抢写锁），`PRAGMA journal_mode=WAL` 收敛到 `initialize()`，`busy_timeout` 对齐 30s，CAS 校验改为流式 `hashlib.file_digest`，SSE 轮询与上传发布脱离 FastAPI 事件循环线程；`APP_HOST` 默认收紧为 `127.0.0.1`，`reset.py` 改用只读 `compute_runtime_paths()` 避免绕过清单缺失守卫，`upload_inspection.vector_source` 按实际写出字节强制执行 ZIP 解压上限。
+  - 修复 `geo.geocode` 超时回退 OSM Nominatim 与后置校验、`vector.reproject`/`io.csv_to_points` 对 `WGS84`/`GCJ02` 契约值的处理、`compiler.py` 的 `exclusiveMinimum`/`exclusiveMaximum` 检查、`attribute.filter`（`contains` 非法正则安全降级为字面匹配，保留既有正则语义）与 `attribute.calculate` (`field_type`)、`poi_query` 国内 OSM 坐标转换与正则转义，以及 `raster_analysis` 山体阴影三角公式、矢量化 TRI/TPI/roughness、等高线层数上限与像素中心偏移。
+- **前端健壮性与性能修复**：
+  - 过期 `localStorage` `activeRun` 遇 404/终态时自动解锁输入栏；对齐 `SessionMeta` 与 `/api/sessions`（消除 `undefined tools`）及 `/api/health` 非 dev 模式显示；修正 `RuntimeInputForm` CRS 占位符为 `{"kind":"EPSG","code":4326}`；拆分输入组件、记忆化 `visibleArtifacts`/`ArtifactWorkspace`/`LazyMapView` 并消除每次按键的 `JSON.stringify(layers)` 与 `FullscreenMap` 重建；修复快完成 `MapLayer` 结算后误落 `expired`、首次 snapshot 瞬时失败不重试、SSE checkpoint 丢事件、滚动锚定与 textarea 高度重置、`ChartView` 主题同步与 chunk 重试、`mapRenderers` `strokeWeight`、中文 IME 组合输入与无障碍属性，并将 `tests/` 纳入 `tsc --noEmit`。
 
 ## 2. 现状审计
 
@@ -343,6 +354,8 @@ sequenceDiagram
 
 ### 5.1 实体定义
 
+> **当前实现对照（`backend/app/runtime/db.py` + `migrations.py` v12）**：下表描述概念/目标领域字段。当前 SQLite 实际 schema 已演进至 migration **v12**（`sessions.title`），部分列名以 `db.py` 为准：例如 `messages` 不含 `run_id`、`message_artifacts` 主键为 `(message_id, artifact_id)`、`runs` 使用 `input_revision` 整数与 `planner_lease_*`/`planner_generation`（幂等键在 `run_commands(run_id, idempotency_key)`）、`plans` 使用 `plan_version`、`tasks` 保存 `tool_name/task_json/lease_*`、`task_attempts` 使用 `attempt_no`、`task_input_bindings`/`task_inputs`/`task_outputs` 使用 `input_name`/`output_name`、`artifact_pins` 主键为 `(artifact_id, pin_key, created_at)`、`cache_artifacts` 主键为 `(cache_key, artifact_id)`、`events` 使用 `event_type`/`created_at`。
+
 | 实体 | 关键字段 | 不变量 |
 |---|---|---|
 | Session | `session_id, title, session_version, deleted_at?, created_at, updated_at` | 会话只组织消息和 Run；修改使用乐观版本 |
@@ -530,15 +543,15 @@ Event 不是异步补写日志；任何已经可见的状态都必须有同事�
 ArtifactType = Vector | Raster | POISet | Coordinate | Table | MapLayer | File
 ```
 
-| 类型 | 规范载荷 | 必要元数据 |
-|---|---|---|
-| Vector | GeoParquet | geometry column、geometry type、feature count、bbox、CRS |
-| Raster | GeoTIFF | width、height、bands、dtype、nodata、transform、CRS、bounds |
-| POISet | Parquet | POI schema、count、source、CRS、bbox |
-| Coordinate | canonical JSON | x/lng、y/lat、CRS、semantic role |
-| Table | Parquet | Arrow schema、row count、业务字段说明 |
-| MapLayer | canonical JSON | layer type、source Artifact IDs、style schema、display CRS |
-| File | 原始字节 | `schema.file` 中的 filename、media type、extension、download disposition、可选 declared_crs/bbox |
+| 类型 | 目标规范载荷 | 当前实现载荷（`executor.py`） | 必要元数据 |
+|---|---|---|---|
+| Vector | GeoParquet | canonical JSON（上传/导出支持 GeoJSON/GPKG/Shapefile ZIP） | geometry column、geometry type、feature count、bbox、CRS |
+| Raster | GeoTIFF | GeoTIFF 原始二进制 | width、height、bands、dtype、nodata、transform、CRS、bounds |
+| POISet | Parquet | canonical JSON | POI schema、count、source、CRS、bbox |
+| Coordinate | canonical JSON | canonical JSON | x/lng、y/lat、CRS、semantic role |
+| Table | Parquet | canonical JSON | Arrow/column schema、row count、业务字段说明 |
+| MapLayer | canonical JSON | canonical JSON | layer type、source Artifact IDs、style schema、display CRS |
+| File | 原始字节 | 原始字节 | `schema.file` 中的 filename、media type、extension、download disposition、可选 declared_crs/bbox、`schema.inspection` |
 
 GCJ02 没有标准 EPSG。对 Vector、POISet、Coordinate 和 MapLayer，Artifact 元数据必须显式保存 `crs.kind = "GCJ02"`；不能仅用 `EPSG:4326` 容器伪装语义。标准投影使用 `crs.kind = "EPSG"` 与整数 code。
 
@@ -719,11 +732,13 @@ class PlannerDraft(BaseModel):
     origin: str = "planner"
 ```
 
-`OpenAICompatiblePlanner` 是当前实现的唯一模型适配器：它向 OpenAI-compatible `/chat/completions` 发送固定版本 prompt（当前 `runtime-planner-2026-09-05.4`）和按请求缩小的 ToolContract catalog，优先使用 `PlannerDraft.model_json_schema()` 的 strict structured output，并同时发送各兼容网关使用的 thinking-disabled 控制；如果网关以 HTTP 400 拒绝扩展/JSON Schema，或以 HTTP 200 返回只有 `reasoning_content` 而没有可公开 `content`，只执行一次兼容请求（移除 vendor thinking 扩展并降级为 `json_object`），返回值仍必须经过同一个严格 Pydantic Draft 和 Compiler。绝不把隐藏 reasoning 当作计划。Runtime 为每次 planner action 构造稳定、有界的 `CandidateCatalog`：它持有排序后的 operation IDs、每个 operation 的端口/参数/策略提示元数据及 canonical JSON，并以 SHA-256 `catalog_hash` 标识；这些 operation IDs 和 hash 会写入 Draft、PlanIR、PlannerAttempt 和 plans.plan_json/ir_json。Compiler 校验 hash 与当前合同元数据一致，并拒绝不在该精确集合中的任务操作；普通 repair/retry 复用同一 catalog，只有显式的 catalog expansion 调用才能生成新 hash。59 个公开 operation 均有至少一个中文自然语言 alias，且 alias 集与 Runtime registry 一致，不再保留指向不存在旧操作名的检索项。catalog 先按自然语言相关性选择目标操作，再执行 Artifact type-level 最短可达分析，并为 loader/converter 依赖闭包预留限额；因此关键词 Top-N 不会挤掉已选操作唯一可行的输入桥接步骤。该闭包只决定向模型展示哪些合同，不替模型补业务参数或直接生成 Task。catalog 对每个输入端口显式给出允许 Artifact type、`one/many` 基数、CRS 要求、参数 schema 与少量版本化提示；端口类型优先于操作名，Planner 不得以名称猜测输入类型。PlannerRequest 同时携带最多 24 条、总计 16000 字符的最近会话消息，以及最多 16 个由历史消息或已完成 Run 显式关联的 prior Artifact；最新消息优先保留。历史文本只用于解析“上一轮”等指代，所有执行输入仍必须以当前或 prior `artifact_id` 显式绑定。Runtime 只做无语义歧义的表示归一化：`draft_version=1` 转为字符串、空 binding object 转 list、single ref 的空 selection/ordinal 归一化，以及把模型选择的可见 Artifact ID 回填为 Runtime 持有的 type/CRS/content hash。它不补工具、参数、CRS、路径或业务值。
+`OpenAICompatiblePlanner` 是当前实现的唯一模型适配器：它向 OpenAI-compatible `/chat/completions` 发送固定版本 prompt（当前 `runtime-planner-2026-10-14.3`）和按请求缩小的 ToolContract catalog，优先使用 `PlannerDraft.model_json_schema()` 的 strict structured output，并同时发送各兼容网关使用的 thinking-disabled 控制；如果网关以 HTTP 400 拒绝扩展/JSON Schema，或以 HTTP 200 返回只有 `reasoning_content` 而没有可公开 `content`，只执行一次兼容请求（移除 vendor thinking 扩展并降级为 `json_object`），返回值仍必须经过同一个严格 Pydantic Draft 和 Compiler。绝不把隐藏 reasoning 当作计划。Runtime 为每次 planner action 构造稳定、有界的 `CandidateCatalog`：它持有排序后的 operation IDs、每个 operation 的端口/参数/策略提示元数据及 canonical JSON，并以 SHA-256 `catalog_hash` 标识；这些 operation IDs 和 hash 会写入 Draft、PlanIR、PlannerAttempt 和 plans.plan_json/ir_json。Compiler 校验 hash 与当前合同元数据一致，并拒绝不在该精确集合中的任务操作；普通 repair/retry 复用同一 catalog，只有显式的 catalog expansion 调用才能生成新 hash。59 个公开 operation 均有至少一个中文自然语言 alias，且 alias 集与 Runtime registry 一致，不再保留指向不存在旧操作名的检索项。catalog 先按自然语言相关性选择目标操作，再执行 Artifact type-level 最短可达分析，并为 loader/converter 依赖闭包预留限额；因此关键词 Top-N 不会挤掉已选操作唯一可行的输入桥接步骤。该闭包只决定向模型展示哪些合同，不替模型补业务参数或直接生成 Task。catalog 对每个输入端口显式给出允许 Artifact type、`one/many` 基数、CRS 要求、参数 schema 与少量版本化提示；端口类型优先于操作名，Planner 不得以名称猜测输入类型。PlannerRequest 同时携带最多 24 条、总计 16000 字符的最近会话消息，以及最多 16 个由历史消息或已完成 Run 显式关联的 prior Artifact；最新消息优先保留。历史文本只用于解析“上一轮”等指代，所有执行输入仍必须以当前或 prior `artifact_id` 显式绑定。Runtime 只做无语义歧义的表示归一化：`draft_version=1` 转为字符串、空 binding object 转 list、single ref 的空 selection/ordinal 归一化，以及把模型选择的可见 Artifact ID 回填为 Runtime 持有的 type/CRS/content hash。它不补工具、参数、CRS、路径或业务值。
 
 Draft JSON/Schema 无法解析或 Compiler 第一次失败时，Planner 最多收到一次诊断驱动的 repair 请求；网络、认证与 provider 拒绝不修复而按其稳定错误码失败。第二次仍不能通过则 Run 写入 `plan.rejected` 并进入 `failed`，错误为 `LLM_DRAFT_INVALID` 或确定性 Compiler code。PlannerAttempt 保存 fenced generation、provider/model、prompt/catalog/request/response hash、Draft、usage、延迟和诊断；原始 token 流不成为运行事实。
 
 ### 7.2 ToolContract
+
+> 说明：本节代码块展示概念性目标模型；当前代码 `backend/app/runtime/contracts.py` 的实际 Pydantic 字段名为 `parameter_schema`、`input_ports`、`output_ports`、`idempotency`、`retry_policy`、`cache_policy`、`resource_budget`、`confirmation_policy`、`crs_policy` 与 `OutputSpec.schema_rule`。
 
 ```python
 class PortContract(BaseModel):
@@ -1074,21 +1089,20 @@ Code Mode 以特殊 `code.execute` ToolContract 存在：
 
 ### 8.1 进程模型
 
+目标统一进程模型（待 FastAPI 与 Worker 独立编排）：
+
 ```text
-python -m app.runtime.supervisor
+python -m app.runtime.supervisor (target unified launcher)
 ├── FastAPI process
 └── Durable Worker process
-    ├── async IO executor (max concurrency = 4)
+    ├── async IO executor (target max concurrency = 4)
     ├── GIS task process (max concurrency = 1)
     └── restricted code process (shares compute semaphore)
 ```
 
 Supervisor 负责启动、健康监测、转发终止信号和异常退出码，不承担 Run/Task 状态。API 或 Worker 任一进程重启后，都从 Runtime DB 恢复，而不是从 supervisor 内存恢复。
 
-实现命令为 `python -m app.runtime.supervisor`；启动时写入受管绝对路径清单
-`APP_DATA_ROOT/runtime_paths.json`，并以 `runtime.worker.lock` 标识活动 Worker。收到终止信号
-后会停止 Worker、清理锁并正常退出。`python -m app.runtime.supervisor --once` 是安全的一次性
-入口：初始化 RuntimeDB/ArtifactStore，最多处理一个任务后退出，供启动探测和测试使用。
+**当前实现状态**：`python -m app.runtime.supervisor` 与 `python -m app.runtime.supervisor --once` **均已实现**（见 `backend/app/runtime/supervisor.py`），用于启动**独立的 Durable Worker 进程**（写受管绝对路径清单 `APP_DATA_ROOT/runtime_paths.json`，以 `runtime.worker.lock` + OS 文件锁 `runtime.worker.guard` 保证单活，`--once` 初始化 RuntimeDB/ArtifactStore 并最多处理一个任务后退出）；`worker_loop` 当前为单线程串行领取任务，尚未实现 4 并发 async IO 池；FastAPI 进程仍通过 `app/main.py` lifespan 内嵌启动 `RuntimeSupervisor`（尚未与 `supervisor.py` 合并为统一父进程）。
 
 ### 8.2 租约领取
 
@@ -1103,7 +1117,7 @@ Worker 领取 ready Task 时：
 5. Task 变为 `leased`，追加 `task.leased`。
 6. 事务提交后才启动执行。
 
-租约默认 30 秒；Worker 每 10 秒续租。对同步真实 Planner 调用，Runtime 同时以 `min(heartbeat_interval, lease/3)` 的频率续规划 lease，直到 provider 返回或失败；因此一个慢模型调用不会在最终 fenced Plan 提交时偶发变成 stale。GIS 子进程仍活跃但续租失败时，Worker 必须终止子进程。Artifact/Task 提交事务必须同时匹配 `attempt_id + lease_owner + lease_generation`，过期 Worker 即使稍后返回也不能提交，从数据库层阻止恢复场景中的双提交。
+租约默认 30 秒；当前 `RuntimeSupervisor` 默认心跳续租间隔为 `min(lease_seconds / 3.0, 5.0)`（默认 **5 秒**；早期目标表曾写 10 秒）。对同步真实 Planner 调用，Runtime 同时以 `min(heartbeat_interval, lease/3)` 的频率续规划 lease，直到 provider 返回或失败；因此一个慢模型调用不会在最终 fenced Plan 提交时偶发变成 stale。GIS 子进程仍活跃但续租失败时，Worker 必须终止子进程。Artifact/Task 提交事务必须同时匹配 `attempt_id + lease_owner + lease_generation`，过期 Worker 即使稍后返回也不能提交，从数据库层阻止恢复场景中的双提交。
 
 ### 8.3 调度语义
 
@@ -1144,16 +1158,16 @@ Task Process 的输入 envelope 只包含：
 
 **当前实现状态（2026-09-05）**：内置 Runtime 隔离子进程在完成 fenced SQLite/CAS 提交后，只通过 `multiprocessing.Queue` 返回有界 completion manifest（Artifact ID、type、validation status、content hash、大小和 media type）；完整 handler `result`、GeoJSON、数组和栅格字节不会再次进入 Queue。扩展 handler 的兼容边界也不把结果放进 Queue，而是写入一次性的 staging result 文件，父进程在子进程退出后读取并立即删除，从而避免“先 join、后 drain Queue”的 feeder deadlock。当前内置 Runtime 子进程仍自行执行 fenced Artifact 提交；“子进程只写 attempt staging、父进程统一发布”仍是更严格的目标边界，不能写成已经实施。
 
-### 8.5 默认资源预算
+### 8.5 默认资源预算（目标规格与当前实现对照）
 
-V1 默认资源档按约 32GB RAM 的本地工作站设计；更小机器必须通过配置下调，而不是依赖操作系统换页兜底：
+V1 目标资源档按约 32GB RAM 的本地工作站设计；下表同时列明目标档位与当前 `ToolContractRegistry.with_builtins()` / `RuntimeSupervisor` 实际默认值：
 
-| 类别 | 超时 | 内存硬限 | 默认并发 |
-|---|---:|---:|---:|
-| 轻量 IO | 合同值，通常 30–60s | Worker 总体监控 | 4 |
-| Vector | 300s | 4096MB | 1 |
-| Raster | 900s | 8192MB | 1 |
-| Code | 60s | 512MB | 与 GIS compute 共用 1 |
+| 类别 | 目标超时 / 内存 / 并发 | 当前代码实际值（`contracts.py` / `queue.py`） |
+|---|---|---|
+| 轻量 IO (`worker_async`) | 30–60s / Worker 监控 / 并发 4 | `geo.geocode`/`poi.search`: `300s / 4096MB`；`map.build`: `120s / 1024MB`；单线程串行 `worker_loop` |
+| Vector (`gis_process`) | 300s / 4096MB / 并发 1 | 默认 `300s / 4096MB`（`coordinate.convert`/`vector.convert_datum` 为 `60s / 1024MB`）；并发 1 |
+| Raster (`gis_process`) | 900s / 8192MB / 并发 1 | 当前 17 个 `raster.*` 合同均为 `300s / 4096MB`；并发 1 |
+| Code (`code_process`) | 60s / 512MB / 共用 1 | `code.execute`/`publish_file` 合同为 `300s / 2048MB`（`runner.py` 另受 `APP_SANDBOX_TIMEOUT_S=60` / `APP_SANDBOX_MEMORY_MB=512` 约束） |
 
 ToolContract 可以收紧预算。提高预算必须通过配置，不允许 Planner 或用户 Prompt 直接绕过本机上限。
 
@@ -1244,11 +1258,13 @@ Event payload 只放可展示摘要和引用。完整参数、代码、stdout、
 | `task.created` | Plan 原子提交 | task_id、task_key、op、initial_status |
 | `task.ready` | 依赖满足或确认批准 | task_id、reason |
 | `task.leased` / `task.started` | Worker 领取及 fenced 执行开始 | task_id、owner、lease_generation、attempt_id |
-| `task.status_changed` | Run/Task 状态切换 | task_id、status |
+| `task.status_changed` / `run.status_changed` | Task 或 Run 状态切换 | task_id 或 status |
+| `task.awaiting_input` | Task 进入等待人工决策态（如取消结果未决） | task_id、reason |
 | `task.cache_hit` | 复用已有 Artifact | task_id、status、cache_key |
 | `task.retry_wait` | 可重试失败 | task_id、attempt、error_code、next_retry_at |
 | `task.empty` / `task.input_conflict` | 空结果允许 / 输入绑定冲突 | task_id、reason? |
-| `task.lease_expired` / `task.worker_lost` / `task.resource_limit_exceeded` | 可恢复或受资源保护的 Worker 失败 | task_id、reason 或 budget |
+| `task.lease_expired` / `task.resource_limit_exceeded` | 可恢复或受资源保护的 Worker 失败（Worker 丢失通过 `task.lease_expired`/`task.failed` + `error_code=WORKER_LOST` 表达） | task_id、reason 或 budget |
+| `artifact.declared` | `/resume` 补充 CRS 声明生成派生 File Artifact | artifact_id、parent_artifact_id、crs |
 | `artifact.published` | Artifact 提交 | artifact_id、content_hash、byte_size、task_id、task_key、op、output |
 | `task.completed` | Task 成功终态 | task_id、status=`succeeded` |
 | `task.failed` | Task 失败终态 | task_id、message |
@@ -1382,9 +1398,11 @@ interface RunProjectionState {
 }
 ```
 
+`GET /api/runs/{run_id}` 还返回 `planning_attempts`、`final_artifact_ids`、`diagnostic` 与 `patch_schema` 字段；另有运维恢复端点 `POST /api/runs/{run_id}/recover` 返回 `{run_id, recovered_task_ids, status}`。
+
 ### 10.3 Event 流
 
-`GET /api/runs/{run_id}/events` 返回 `text/event-stream`。首次订阅不带 cursor 时从该 Run 的第一条 Event 开始；恢复订阅使用 `Last-Event-ID` 或 `after_event_id`。Run 不存在返回 `404 RUN_NOT_FOUND`，非法 cursor 返回 `409 INVALID_EVENT_CURSOR`。完整传输与终态规则见第 9.3 节。
+`GET /api/runs/{run_id}/events` 返回 `text/event-stream`。首次订阅不带 cursor 时从该 Run 的第一条 Event 开始；恢复订阅使用 `Last-Event-ID`、`after_event_id`（或兼容别名 `last_event_id`）。Run 不存在返回 `404 RUN_NOT_FOUND`，非法 cursor 返回 `409 INVALID_EVENT_CURSOR`。完整传输与终态规则见第 9.3 节。
 
 ### 10.4 取消
 
@@ -1394,7 +1412,7 @@ interface RunProjectionState {
 {"command_id": "cmd-client-uuid", "expected_run_version": 3}
 ```
 
-成功返回 `202` 与更新后的 `run_version/status=cancelled`（非终态 Task 会在同一写事务中变为 `cancelled`）。同一 `command_id` 和相同请求体的网络重试直接返回已保存响应，即使 Run 版本已经变化；相同 ID 携带不同请求体返回 `409 COMMAND_ID_CONFLICT`。终态 Run 重复取消返回当前快照，不创建第二个终态 Event。
+成功返回 `202` 与更新后的 `run_version/status=cancelled`（若子进程终止状态无法确定则进入 `status=awaiting_input`，非终态 Task 会在同一写事务中变为 `cancelled` 或 `awaiting_input`）。同一 `command_id` 和相同请求体的网络重试直接返回已保存响应，即使 Run 版本已经变化；相同 ID 携带不同请求体返回 `409 COMMAND_ID_CONFLICT`。终态 Run 重复取消返回当前快照，不创建第二个终态 Event。
 
 ### 10.5 恢复等待输入
 
@@ -1404,11 +1422,12 @@ interface RunProjectionState {
 {
   "command_id": "cmd-client-uuid",
   "expected_run_version": 2,
+  "action": "resume",
   "patch": {"source_crs": {"kind": "EPSG", "code": 4326}}
 }
 ```
 
-只有编译输入不足导致的 `awaiting_input` Run 可 resume。patch 必须通过 Event 中的 `patch_schema`；成功事务创建新的 RunInputRevision、递增 `run_version`、保存 RunCommand 并把 Run 置回 `queued`。Worker 重新领取 planning lease 后才转为 `planning`；Compiler 成功后创建新 Plan revision。旧输入修订和 Plan 保留审计用途。
+`awaiting_input` Run 可通过此端点恢复（规划期补充输入或取消未决恢复；取消未决时响应可能携带 `requires_user_decision` 与 `pending_task_ids`）。patch 必须通过 Event 中的 `patch_schema`；成功事务创建新的 RunInputRevision、递增 `run_version`、保存 RunCommand 并把 Run 置回 `queued`（或按决策重新激活 Task）。Worker 重新领取 planning lease 后才转为 `planning`；Compiler 成功后创建新 Plan revision。旧输入修订和 Plan 保留审计用途。
 
 ### 10.6 确认副作用
 
@@ -1428,13 +1447,13 @@ V1 的 `confirmation` 是常量 `true`，不接受 `false`；用户不批准时�
 
 ### 10.7 上传 Artifact
 
-`POST /api/artifacts/uploads` 使用 multipart 上传。除文件外可带 `declared_crs` 和 `declared_bbox` canonical JSON 字段；它们是用户声明，不是服务端猜测，后续 `io.load_vector/io.load_raster` 必须与文件内元数据交叉验证。成功返回 `201 Created` 和 `File` Artifact：
+`POST /api/artifacts/uploads` 使用 multipart 上传。除文件外可带 `declared_crs` 和 `declared_bbox` canonical JSON 字段；它们是用户声明，不是服务端猜测。上传实现按 1 MiB 分块写入受控 staging，不把整个 multipart 文件读入 API 进程内存；`UPLOAD_MAX_SIZE` 在写入过程中硬拒绝，超限返回 `413 ARTIFACT_TOO_LARGE`。在发布到 CAS 前，API 通过 `upload_inspection.py` 在**可终止的受限子进程**中完成物理文件检查与声明交叉验证（校验格式、单图层约束、KML 安全、ZIP 成员数/实际解压累计字节上限/路径穿越/超过 1000:1 压缩比，以及 `declared_crs`/`declared_bbox` 与文件物理元数据的一致性），失败立即返回 `422 ARTIFACT_INVALID`。成功返回 `201 Created` 和 `File` Artifact（`crs` 为物理检查得到的 CRS 或无物理 CRS 时的 `null`，`schema` 同时保存 `file`、`inspection` 与 `fields`）；将 `File` 转换为可计算空间对象仍通过 `io.load_vector` / `io.load_raster` / `io.load_csv` Task 完成。
 
 ```json
 {
   "artifact_id": "art_01J...",
   "type": "File",
-  "crs": null,
+  "crs": {"kind": "EPSG", "code": 4326},
   "media_type": "application/geo+json",
   "byte_size": 12345,
   "content_hash": "<64 位小写 SHA-256 十六进制>",
@@ -1446,12 +1465,12 @@ V1 的 `confirmation` 是常量 `true`，不接受 `false`；用户不批准时�
       "download_disposition": "attachment",
       "declared_crs": {"value": {"kind": "EPSG", "code": 4326}, "source": "user"},
       "declared_bbox": {"value": [116.2, 39.7, 116.6, 40.1], "source": "user"}
-    }
+    },
+    "inspection": {"format": "geojson", "artifact_type": "Vector", "crs_status": "present"},
+    "fields": {}
   }
 }
 ```
-
-上传实现按 1 MiB 分块写入受控 staging，不把整个 multipart 文件读入 API 进程内存；`UPLOAD_MAX_SIZE` 在写入过程中硬拒绝，超限返回 `413 ARTIFACT_TOO_LARGE`。ZIP 在发布前检查成员数、累计解压大小、路径穿越和超过 1000:1 的压缩比；失败返回 `422 ARTIFACT_INVALID`。解析不在上传 API 中完成，必须通过 `io.load_vector` 或 `io.load_raster` Task 产生类型化 Artifact。
 
 ### 10.8 Artifact 元数据与内容
 
@@ -1482,17 +1501,19 @@ DEM 试点使用 `io.load_raster`、`io.load_vector` 和 `raster.clip_mask`，Ge
 }
 ```
 
-### 10.9 Session API
+### 10.9 Session API（当前实现与目标规格区分）
 
-Session CRUD 保留现有产品形态，但存储改为 SQLite：
+**当前实现（`backend/app/api/runtime.py`）**：
 
-- `POST /api/sessions`：创建 Session，返回 `201` 和 `session_version=1`。
-- `GET /api/sessions`：按 `updated_at` 分页列出。
-- `GET /api/sessions/{session_id}`：返回 Session、Message 和最近 Run 摘要。
-- `PATCH /api/sessions/{session_id}`：使用 `expected_version` 修改标题。
-- `DELETE /api/sessions/{session_id}`：使用 `expected_version` 执行显式删除。
+- `POST /api/sessions`：创建 Session，返回 `201` 和 `{id, title, created_at, updated_at}`。
+- `GET /api/sessions`：按 `updated_at` 倒序返回最近 200 条 `{items}`。
+- `GET /api/sessions/{session_id}`：返回单个 Session 元数据 `{id, title, created_at, updated_at}`；不存在或已删除返回 `404 SESSION_NOT_FOUND`。
+- `GET /api/sessions/{session_id}/messages`：返回该会话的持久化消息列表 `{messages}`。
+- `GET /api/sessions/{session_id}/runs`：按 `(created_at, run_id)` 倒序分页列出 Run（每页最多 200 条，支持 `?before=` 游标与 `next_cursor`，非法游标返回 `422 INVALID_RUN_CURSOR`）。
+- `PATCH /api/sessions/{session_id}`：接收 `{title}`（去空白后 1–120 字符，否则 `422 INVALID_SESSION_TITLE`），返回 `204`。
+- `DELETE /api/sessions/{session_id}`：事务内写入 Session tombstone 并解除 `message_artifacts`，保留 producer Run/Plan/Task 供引用与延迟 GC，返回 `204`。
 
-Session 删除在事务中写入 Session tombstone、递增版本、隐藏消息并解除 MessageArtifact，不物理删除作为 Artifact producer 的 Run/Plan/Task；metadata/CAS GC 等待 grace period 和全部引用消失后处理。请求内不递归删除大文件。活动 Run 存在时返回 `409 SESSION_HAS_ACTIVE_RUN`，必须先取消并等待终态。
+**目标规格（尚未实现）**：对外暴露 `session_version` / `expected_version` 乐观并发校验（`409 SESSION_VERSION_CONFLICT`），以及删除仍含活动 Run 的 Session 时返回 `409 SESSION_HAS_ACTIVE_RUN`。
 
 ### 10.10 破坏性替代
 
@@ -1505,38 +1526,33 @@ GET  /api/runs/{run_id}/events       投影事实
 POST /api/runs/{run_id}/cancel       写入命令
 POST /api/runs/{run_id}/resume       写入命令
 POST /api/runs/{run_id}/confirm      确认精确副作用
+POST /api/runs/{run_id}/recover      手动触发孤儿租约恢复
 ```
 
-不提供旧 SSE payload 的长期兼容适配层。
+旧路由 `/api/chat`、`/api/chat/{path}` 与 `/api/upload` 返回 `410 LEGACY_RUNTIME_REMOVED`；不提供旧 SSE payload 的长期兼容适配层。
 
-### 10.11 错误码
+### 10.11 错误码（当前实现与目标规划标注）
 
-| code | 含义 |
-|---|---|
-| `RUN_NOT_FOUND` | Run 不存在 |
-| `RUN_VERSION_CONFLICT` | 乐观并发版本冲突 |
-| `CLIENT_REQUEST_CONFLICT` | 同 Session 的幂等 ID 对应不同请求体 |
-| `COMMAND_ID_CONFLICT` | 同一命令 ID 对应不同请求体 |
-| `RUN_NOT_AWAITING_INPUT` | 非等待态调用 resume |
-| `SESSION_HAS_ACTIVE_RUN` | 删除仍有活动 Run 的 Session |
-| `SESSION_VERSION_CONFLICT` | Session 乐观并发版本冲突 |
-| `CONFIRMATION_NOT_PENDING` | Task 当前没有待确认动作 |
-| `ACTION_HASH_MISMATCH` | 确认的动作 hash 与 PlanIR 不一致 |
-| `PLAN_DRAFT_INVALID` | PlannerDraft 两次仍无效 |
-| `PLAN_COMPILE_FAILED` | 静态检查失败且不可询问修复 |
-| `ARTIFACT_NOT_FOUND` | Artifact 不存在 |
-| `ARTIFACT_INVALID` | Artifact 不可消费 |
-| `ARTIFACT_TYPE_MISMATCH` | 端口类型不匹配 |
-| `CRS_REQUIRED` | CRS 缺失或歧义 |
-| `TASK_TIMEOUT` | 超出合同 wall-clock timeout |
-| `TASK_OOM` | 触发内存硬限 |
-| `TASK_PROCESS_CRASHED` | 子进程非预期退出 |
-| `LEASE_EXPIRED` | Task 已领取但租约在启动证明前过期 |
-| `WORKER_LOST` | running/validating Task 的 Worker 租约过期 |
-| `SIDE_EFFECT_OUTCOME_UNKNOWN` | 副作用提交状态无法确定 |
-| `INVALID_EVENT_CURSOR` | Event cursor 无效 |
-| `ARTIFACT_INVALID` | 上传格式、大小、ZIP 安全或 Artifact 内容失败 |
-| `DECLARED_METADATA_MISMATCH` | 用户声明 CRS/bbox 与文件元数据冲突 |
+| code | 状态 | 含义 |
+|---|---|---|
+| `RUN_NOT_FOUND` | 当前实现 | Run 不存在（404） |
+| `RUN_VERSION_CONFLICT` | 当前实现 | 乐观并发版本冲突（409） |
+| `CLIENT_REQUEST_CONFLICT` | 当前实现 | 同 Session 的幂等 ID 对应不同请求体（409） |
+| `COMMAND_ID_CONFLICT` | 当前实现 | 同一命令 ID 对应不同请求体（409） |
+| `RUN_NOT_AWAITING_INPUT` | 当前实现 | 非等待态调用 resume（409） |
+| `PATCH_SCHEMA_INVALID` / `INVALID_RESUME_ACTION` | 当前实现 | resume patch 或 action 非法（422） |
+| `CONFIRMATION_NOT_PENDING` / `ACTION_HASH_MISMATCH` / `INVALID_CONFIRMATION` | 当前实现 | 确认动作不存在、hash 不匹配或确认值非法（409/422） |
+| `SESSION_NOT_FOUND` / `INVALID_SESSION_TITLE` / `INVALID_RUN_CURSOR` | 当前实现 | 会话不存在（404）、标题或 Run 分页游标非法（422） |
+| `SESSION_HAS_ACTIVE_RUN` / `SESSION_VERSION_CONFLICT` | 目标规格 | 删除活动会话 / 会话乐观锁冲突（当前未启用） |
+| `LLM_NOT_CONFIGURED` / `LLM_DRAFT_INVALID` / `PLAN_DRAFT_INVALID` | 当前实现 | 未配置 LLM 或 PlannerDraft 校验失败 |
+| `PLAN_COMPILE_FAILED` / `TYPE_MISMATCH` / `INVALID_PARAMETER` / `CRS_REQUIRED` / `CRS_CONFLICT` | 当前实现 | 静态编译失败、端口类型/参数/CRS 校验失败 |
+| `ARTIFACT_NOT_FOUND` / `ARTIFACT_INVALID` / `ARTIFACT_TOO_LARGE` / `ARTIFACT_RANGE_INVALID` | 当前实现 | Artifact 不存在（404）、上传/格式/内容无效（422）、超大小（413）或 Range 非法（416） |
+| `RASTER_PREVIEW_BUSY` / `RASTER_PREVIEW_UNAVAILABLE` | 当前实现 | 栅格预览槽位繁忙（503）或无法生成预览（422） |
+| `DECLARED_METADATA_MISMATCH` | 当前实现 | 用户声明 CRS/bbox 与文件元数据冲突 |
+| `TIMEOUT` / `SANDBOX_TIMEOUT` / `RESOURCE_LIMIT` / `SANDBOX_OOM` / `TASK_EMPTY` | 当前实现 | 超时、资源/内存硬限或禁止的空输出 |
+| `LEASE_EXPIRED` / `WORKER_LOST` / `WORKER_PROTOCOL_ERROR` / `SIDE_EFFECT_OUTCOME_UNKNOWN` | 当前实现 | 租约过期、子进程/Worker 丢失、IPC 协议错误或副作用结果未知 |
+| `INVALID_EVENT_CURSOR` | 当前实现 | SSE Event cursor 无效（409） |
+| `LEGACY_RUNTIME_REMOVED` | 当前实现 | 已移除的旧 `/api/chat`、`/api/upload` 路由（410） |
 
 并发冲突统一返回 HTTP `409`。例如两个客户端都以 `expected_run_version=3` 取消和恢复同一 Run，先提交者把版本更新为 4；后提交者得到：
 
@@ -1635,7 +1651,7 @@ POST /api/runs/{run_id}/confirm      确认精确副作用
 #### 阶段6已落地的硬切换合同（2026-09-04）
 
 - 五个 Kernel 语义已由 `backend/app/runtime/kernel.py::KernelService` 承载，仅供 Planner/Compiler 服务调用；`ToolContractRegistry.with_builtins()` 不包含这些名称。
-- FastAPI 只挂载 `app.api.runtime`。`/api/runs`、`/api/artifacts` 和 `/api/sessions` 是当前公开 API；旧 `/api/chat`、`/api/upload`（含子路径）统一返回 HTTP 410、错误码 `LEGACY_RUNTIME_REMOVED`。
+- FastAPI 只挂载 `app.api.runtime`。`/api/runs`、`/api/artifacts` 和 `/api/sessions` 是当前公开 API；旧 `/api/chat`（含子路径）与 `/api/upload` 统一返回 HTTP 410、错误码 `LEGACY_RUNTIME_REMOVED`。
 - Runtime SQLite（`APP_DATA_ROOT/runtime.db`）和 Artifact CAS 是 Session、Message、Run、Event、Upload 的权威事实；主应用启动不初始化 Redis 或 LangGraph SqliteSaver，Redis 不可用不影响 Runtime 启动。
 - 前端仅创建 Runtime Run、订阅 Runtime Event，并上传到 `/api/artifacts/uploads`；不再依据 `VITE_RUNTIME_API` 选择旧聊天流。
 - 阶段 7 清单删除已完成；旧 Dispatcher、旧 chat/upload、Redis/LangGraph 主链、旧 Agent 测试、golden、blackbox 证据，以及后续审计发现的 V1 前端聊天流、Redis 迁移器和 mock LLM 支持代码均已按 manifest 删除；Post-delete gate 已通过。
@@ -1652,12 +1668,12 @@ POST /api/runs/{run_id}/confirm      确认精确副作用
 - planner lease、`planner_attempts` migration、request/catalog/response hash、usage、延迟、一次 repair 与原子 Plan 激活。首次 JSON/Draft 无法解析也会先持久化 initial failed Attempt，再以 `rejected_draft=null` 发起唯一 repair Attempt；不会出现未审计的隐藏第二次模型调用。
 - ArtifactRef 回填、59 项中文自然语言 alias、type dependency closure、有限候选 catalog、低规划 token 预算和关闭隐藏 thinking 的 provider 兼容策略。
 - catalog 逐端口冻结 type/cardinality/参数 schema；`geo.transform`、`vector.reproject` 与 `vector.reproject_many` 均以 CRS object 合同表达目标 CRS，避免旧 handler 字符串约定越过 Compiler。
-- `tests/live/test_runtime_live_llm_actions.py`、`runtime_live_intent_corpus.json` 与 `runtime_live_fixture_facts.json`：只有设置 `GISMIND_LIVE_LLM=1` 才调用真实模型；默认单元/集成套件不伪造模型成功。corpus 是独立作者维护的静态中文业务意图证据（当前 200 条：59 条正向覆盖全部 59 个 canonical operation、41 条多步数据流、50 条不安全/不完整负向意图、50 条歧义澄清意图），每条显式保存 `expected_ops`、`expected_origin` 和语义约束；fixture facts 同样静态维护，测试不从 `_ALIASES`、Contract registry 或运行时 metadata 生成用户 prompt 或执行 witness。正向/多步用例要求 Compiler 产出的 canonical operation 序列精确匹配 `expected_ops`；只有案例显式声明并说明理由时才允许受限的额外操作。多步用例还必须以编译后的 `TaskOutputRef` 端口和拓扑验证真实依赖。真实模型须自行选择 operation、构造 ArtifactRef/TaskOutputRef 并在至多一次诊断 repair 后通过 Compiler；负向/歧义用例验证真实 PlannerDraft 的澄清边界，不伪造 handler 成功。测试分别报告并门禁 `first_pass_rate >= 80%` 与 `final_compile_rate >= 90%`。
+- `tests/live/test_runtime_live_llm_actions.py`、`runtime_live_intent_corpus.json` 与 `runtime_live_fixture_facts.json`：只有设置 `GISMIND_LIVE_LLM=1` 才调用真实模型；默认单元/集成套件不伪造模型成功。corpus 是独立作者维护的静态中文业务意图证据（当前 201 条：59 条正向覆盖全部 59 个 canonical operation、多步数据流、不安全/不完整负向意图与歧义澄清意图），每条显式保存 `expected_ops`、`expected_origin` 和语义约束；fixture facts 同样静态维护，测试不从 `_ALIASES`、Contract registry 或运行时 metadata 生成用户 prompt 或执行 witness。正向/多步用例要求 Compiler 产出的 canonical operation 序列精确匹配 `expected_ops`；只有案例显式声明并说明理由时才允许受限的额外操作。多步用例还必须以编译后的 `TaskOutputRef` 端口和拓扑验证真实依赖。真实模型须自行选择 operation、构造 ArtifactRef/TaskOutputRef 并在至多一次诊断 repair 后通过 Compiler；负向/歧义用例验证真实 PlannerDraft 的澄清边界，不伪造 handler 成功。测试分别报告并门禁 `first_pass_rate >= 80%` 与 `final_compile_rate >= 90%`。
 - 同一 live suite 的 `test_real_llm_e2e_geocode_to_artifact`、`test_real_llm_e2e_vector_buffer_to_typed_artifact` 和 `test_real_llm_e2e_raster_slope_preserves_geotiff` 用自然语言请求验证 Run 输入、planning lease、PlannerAttempt、PlanIR、隔离 Worker、真实 handler、CAS Artifact 和 completed Event 全链路，并分别读取 Coordinate、Vector GeoJSON 和 Raster GeoTIFF 内容做空间/物理格式断言；Task succeeded 或 Artifact 类型正确不再足以通过。
 
-旧 action-vocabulary corpus 曾在 2026-09-05 对 `deepseek-v4-flash` 得到 199/200，但旧 prompt 明示 operation 名且由运行时 alias 词表生成；该生成逻辑已从 live suite 删除，历史数字只保留为诊断，**不是当前盲测成功率，也不得作为发布证据**。新的静态 corpus 尚未在本次变更中调用真实 provider；不得把既有旧 corpus 数字或确定性测试外推为新证据。每次 provider/model/prompt/contract 变化都必须重新运行并保存外部报告。
+旧 action-vocabulary corpus 曾在 2026-09-05 对 `deepseek-v4-flash` 得到 199/200，但旧 prompt 明示 operation 名且由运行时 alias 词表生成；该生成逻辑已从 live suite 删除，历史数字只保留为诊断，**不是当前盲测成功率，也不得作为发布证据**。每次 provider/model/prompt/contract 变化都必须重新运行并保存外部报告。
 
-退出/持续门禁：每次发布前用目标 provider 重新运行 200 条盲测 suite，首次无 repair 编译率必须 `>= 80%`，至多一次 repair 后最终编译率必须 `>= 90%`；任何 `LLM_UNAVAILABLE`、`LLM_DRAFT_INVALID`、`TYPE_MISMATCH`、`INVALID_PARAMETER`、操作序列不匹配、未授权额外操作或缺失 TaskOutput 依赖都必须按 provider/operation/contract 维度报告，不能改用 mock、关键词路由或降低样本数掩盖。该门禁只证明意图选择与编译，完整 Run 和语义正确率继续由真实垂直 E2E/分操作验收独立证明。
+退出/持续门禁：每次发布前用目标 provider 重新运行 201 条盲测 suite，首次无 repair 编译率必须 `>= 80%`，至多一次 repair 后最终编译率必须 `>= 90%`；任何 `LLM_UNAVAILABLE`、`LLM_DRAFT_INVALID`、`TYPE_MISMATCH`、`INVALID_PARAMETER`、操作序列不匹配、未授权额外操作或缺失 TaskOutput 依赖都必须按 provider/operation/contract 维度报告，不能改用 mock、关键词路由或降低样本数掩盖。该门禁只证明意图选择与编译，完整 Run 和语义正确率继续由真实垂直 E2E/分操作验收独立证明。
 
 ---
 
@@ -1772,7 +1788,7 @@ python -m app.runtime.reset --confirm-destructive-reset
 | Metadata GC | Session tombstone、producer FK、引用释放 | 仍被 Artifact 引用的 Task/Plan/Run 不删除 |
 | Vertical E2E | 上传→CRS→buffer→map→file | IR、进程、Artifact、血缘、Event 全闭环 |
 | ToolContract coverage | 每个公开操作 | Contract、handler、validator、测试四者齐全 |
-| Real LLM blind intent gate | 至少 200 条、覆盖全部 Runtime operation，不向 prompt 泄露 operation 名 | 配置真实 provider；每条走 LLM → Draft → Compiler；canonical operation 序列精确匹配，任何额外操作须在静态 case 中声明并说明理由；多步任务验证 TaskOutputRef 端口与拓扑；首次率 `>=80%`、最终率 `>=90%` |
+| Real LLM blind intent gate | 至少 201 条、覆盖全部 Runtime operation，不向 prompt 泄露 operation 名 | 配置真实 provider；每条走 LLM → Draft → Compiler；canonical operation 序列精确匹配，任何额外操作须在静态 case 中声明并说明理由；多步任务验证 TaskOutputRef 端口与拓扑；首次率 `>=80%`、最终率 `>=90%` |
 | Real vertical E2E | 至少一个无 mock LLM Run | Run 输入、planning lease、PlannerAttempt、PlanIR、Worker、真实 handler、Artifact 与终态 Event 全闭环 |
 
 ### 13.3 删除门禁
@@ -1807,10 +1823,11 @@ manifest 曾精确记录 13 个受 ACL 锁定的 pytest/fixture 目录；目录�
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pytest tests -q
+python -m pytest tests -m "not live_llm" -q
 
 cd ..\frontend
 npm run typecheck
+npm run test
 npm run build
 ```
 
@@ -1819,7 +1836,7 @@ npm run build
 ```powershell
 cd backend
 $env:GISMIND_LIVE_LLM = "1"
-$env:GISMIND_LIVE_LLM_CASES = "200"
+$env:GISMIND_LIVE_LLM_CASES = "201"
 $env:GISMIND_LIVE_LLM_CONCURRENCY = "8"
 python -m pytest tests/live/test_runtime_live_llm_actions.py -q -s
 ```
@@ -1867,29 +1884,32 @@ cd backend
 | `APP_RASTER_MEMORY_MB` | `8192` | Raster 内存硬限 |
 | `APP_CODE_TIMEOUT_S` | `60` | Code 默认超时 |
 | `APP_CODE_MEMORY_MB` | `512` | Code 内存硬限 |
+| `APP_HOST` / `APP_PORT` | `127.0.0.1` / `8000` | 当前实现：默认仅监听本机回环地址，防止无鉴权单机服务暴露局域网 |
 | `APP_ARTIFACT_GC_GRACE_S` | `86400` | 无引用 Artifact 删除宽限 |
 | `UPLOAD_MAX_SIZE` | `50` MB | 上传分块写入时的单文件硬上限 |
-| `UPLOAD_ZIP_MAX_TOTAL_SIZE` | `500` MB | ZIP 成员累计解压大小上限 |
+| `UPLOAD_ZIP_MAX_TOTAL_SIZE` | `500` MB | ZIP 成员累计解压大小上限（按实际写出字节硬控） |
 | `UPLOAD_ZIP_MAX_FILE_COUNT` | `100` | ZIP 成员数量上限 |
-| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 空 / 空 / `k2.7-code` | 真实 Planner provider；缺任一项，Worker 持久化 `LLM_NOT_CONFIGURED` |
+| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | 空 / 空 / `deepseek-flash` | 真实 Planner provider；缺任一项，Worker 持久化 `LLM_NOT_CONFIGURED` |
+| `LLM_MAX_TOKENS` | `4096` | 通用 LLM 输出上限 |
 | `APP_PLANNER_MAX_TOKENS` | `1536` | Planner JSON 输出上限；独立于通用 `LLM_MAX_TOKENS` |
-| `APP_PLANNER_TIMEOUT_S` | `45` | 单次 LLM planning transport timeout |
+| `APP_PLANNER_TIMEOUT_S` / `APP_PLANNER_TOTAL_TIMEOUT_S` / `APP_PLANNER_MAX_HTTP_CALLS` | `45` / `90.0` / `6` | 单次规划超时、单次 generation 总期限与 HTTP 调用上限 |
 | `APP_MAX_LLM_RETRIES` | `3` | 可重试网络/限流/5xx 的最大额外请求次数 |
-| `APP_SANDBOX_TIMEOUT_S` / `APP_SANDBOX_MEMORY_MB` | `60` / `512` | Code sandbox 默认资源边界 |
+| `APP_SANDBOX_ENABLED` / `APP_SANDBOX_TIMEOUT_S` / `APP_SANDBOX_MEMORY_MB` / `APP_SANDBOX_NETWORK_ALLOWLIST` | `true` / `60` / `512` / 空 | Code sandbox 开关、资源边界与网络白名单 |
 
-所有目录启动时解析为绝对路径，写入 `${APP_DATA_ROOT}/runtime_paths.json`，并验证边界；Artifact 与 staging 不在同一 volume/filesystem 时拒绝启动。当前没有 `APP_LEASE_RENEW_S` 校验；该规则与上述尚未实现的并发/资源变量一起保留为目标规格。
+所有目录启动时解析为绝对路径，按需原子写入 `${APP_DATA_ROOT}/runtime_paths.json`（`reset.py` 仅使用只读 `compute_runtime_paths()` 检查现有清单，不重建缺失清单），并验证边界；Artifact 与 staging 不在同一 volume/filesystem 时拒绝启动。当前没有 `APP_LEASE_RENEW_S` 校验；该规则与上述尚未实现的并发/资源变量一起保留为目标规格。
 
 ### 14.2 启动与健康检查（当前与目标区分）
 
 ```powershell
 cd backend
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-当前 Worker 在 FastAPI lifespan 中启动（测试可注入 `RuntimeSupervisor(autostart=False)`）。独立 API/Worker 进程和一次性 supervisor CLI 是后续运维规格，当前不应执行下列示意命令：
+当前 FastAPI 默认在 lifespan 中内嵌启动 `RuntimeSupervisor`（测试可注入 `RuntimeSupervisor(autostart=False)`）。**独立 Durable Worker CLI 已实现**（但不拉起 FastAPI；统一同时编排 API+Worker 的单入口仍是目标规格）：
 
 ```powershell
-python -m app.runtime.supervisor --once  # 目标命令，当前未实现
+python -m app.runtime.supervisor        # 当前已实现：独立 Durable Worker 进程
+python -m app.runtime.supervisor --once # 当前已实现：初始化并最多执行一个任务后退出
 ```
 
 当前 `/api/health` 已执行 SQLite `BEGIN IMMEDIATE` 写锁探测，并在 dev 投影 Runtime Store 可写状态、Worker 存活/活动进程/资源限制，以及 queued/planning Run、ready/active/retry-wait Task 数量；未启用 autostart 的嵌入式测试 Worker 明确报告 `running=false`，不会伪装运行。以下磁盘、WAL、schema version、最近失败和孤儿 staging 仍是目标增强：
@@ -2001,7 +2021,7 @@ Gismind 只有在以下条件同时满足时，才可以对外描述为 GIS Runt
 6. 前端不依赖连接终止猜测运行状态。
 7. 旧 Dispatcher/Sub-Agent/Redis/LangGraph 主链、数字引用、前端旧聊天流和旧 mock LLM 支持代码已经删除；`docs/v1/` 仅作为非执行历史归档保留。
 8. 新测试矩阵和垂直 E2E 在当前代码上通过。
-9. 真实 LLM 盲测 200 条回归以当前 provider 运行，首次无修复编译率不低于 80%，至多一次修复后的最终编译率不低于 90%。
+9. 真实 LLM 盲测 201 条回归以当前 provider 运行，首次无修复编译率不低于 80%，至多一次修复后的最终编译率不低于 90%。
 
 ---
 

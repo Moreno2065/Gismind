@@ -17,7 +17,11 @@ class InspectionResult:
 
 def inspect(code: str) -> InspectionResult:
     tree = ast.parse(code, mode="exec")
-    banned_names = {"socket", "tool_fns", "rpc", "eval", "exec", "compile", "__import__"}
+    banned_names = {
+        "socket", "tool_fns", "rpc", "eval", "exec", "compile", "__import__",
+        "open", "getattr", "setattr", "delattr", "globals", "locals", "vars",
+        "breakpoint", "input", "sitecustomize_gismind",
+    }
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             raise ASTBannedNodeError("imports are not allowed")

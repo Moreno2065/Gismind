@@ -19,7 +19,7 @@ RUN_TRANSITIONS = {
     "awaiting_input": {"queued", "ready", "running", "cancelling"},
     "ready": {"running", "failed", "cancelling"},
     "running": {"completed", "failed", "cancelling", "awaiting_input"},
-    "cancelling": {"cancelled"},
+    "cancelling": {"cancelled", "awaiting_input"},
     "completed": set(),
     "failed": set(),
     "cancelled": set(),
@@ -134,7 +134,9 @@ class RuntimeStore:
             raise ValueError("artifact storage path escapes artifact root") from exc
         if not path.is_file() or path.stat().st_size != size:
             raise ValueError("artifact CAS file is missing or has an unexpected size")
-        if hashlib.sha256(path.read_bytes()).hexdigest() != artifact["content_hash"]:
+        with path.open("rb") as stream:
+            actual_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual_hash != artifact["content_hash"]:
             raise ValueError("artifact CAS content hash mismatch")
 
     def _require_valid_artifact(self, c, artifact_id: str) -> dict:
@@ -308,6 +310,11 @@ class RuntimeStore:
     @contextmanager
     def transaction(self) -> Iterator[Any]:
         with self.db.transaction() as conn:
+            yield conn
+
+    @contextmanager
+    def read_transaction(self) -> Iterator[Any]:
+        with self.db.read_transaction() as conn:
             yield conn
 
     def _write(self, fn):
@@ -583,7 +590,7 @@ class RuntimeStore:
         consistent snapshot while allowing concurrent writers to commit after
         this method returns.
         """
-        with self.transaction() as c:
+        with self.read_transaction() as c:
             run_row = c.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
             if run_row is None:
                 return None

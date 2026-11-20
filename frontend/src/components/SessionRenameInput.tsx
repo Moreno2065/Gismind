@@ -13,6 +13,13 @@ interface Props {
 
 export function SessionRenameInput({ initialTitle, onCommit, onCancel }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const settledRef = useRef(false);
+
+  const finish = useCallback((action: () => void) => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    action();
+  }, []);
 
   // 挂载即聚焦 & 选中全部
   useEffect(() => {
@@ -25,31 +32,24 @@ export function SessionRenameInput({ initialTitle, onCommit, onCancel }: Props) 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         const v = e.currentTarget.value.trim();
-        if (v.length === 0) {
-          onCancel();
-        } else {
-          onCommit(v);
-        }
+        finish(() => (v.length === 0 ? onCancel() : onCommit(v)));
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        onCancel();
+        finish(onCancel);
       }
     },
-    [onCommit, onCancel],
+    [finish, onCommit, onCancel],
   );
 
   const handleBlur = useCallback(
     (e: React.FocusEvent<HTMLInputElement>) => {
       const v = e.currentTarget.value.trim();
-      if (v.length === 0) {
-        onCancel();
-      } else {
-        onCommit(v);
-      }
+      finish(() => (v.length === 0 ? onCancel() : onCommit(v)));
     },
-    [onCommit, onCancel],
+    [finish, onCommit, onCancel],
   );
 
   return (

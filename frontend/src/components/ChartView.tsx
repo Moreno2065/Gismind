@@ -35,6 +35,9 @@ export function prepareCharts(): Promise<void> {
         ...Object.values(features),
         CanvasRenderer,
       ]);
+    }).catch((err) => {
+      chartModulesReady = null;
+      throw err;
     });
   }
   return chartModulesReady;

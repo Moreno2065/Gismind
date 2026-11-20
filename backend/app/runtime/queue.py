@@ -213,12 +213,32 @@ class _WindowsProcessHandle:
         self._handle = handle
         self.pid = pid
 
+    @staticmethod
+    def _kernel32():
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        signatures = {
+            "OpenProcess": ([wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE),
+            "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
+            "GetExitCodeProcess": ([wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL),
+            "TerminateProcess": ([wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
+            "WaitForSingleObject": ([wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
+        }
+        for name, (argtypes, restype) in signatures.items():
+            fn = getattr(kernel32, name, None)
+            if isinstance(fn, ctypes._CFuncPtr):
+                fn.argtypes = argtypes
+                fn.restype = restype
+        return kernel32
+
     @classmethod
     def open(cls, pid: int):
         if os.name != "nt":
             return None
         import ctypes
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = cls._kernel32()
         handle = kernel32.OpenProcess(
             cls._PROCESS_TERMINATE | cls._PROCESS_QUERY_LIMITED_INFORMATION | cls._SYNCHRONIZE,
             False,
@@ -238,8 +258,7 @@ class _WindowsProcessHandle:
     def _close(self) -> None:
         if self._handle:
             try:
-                import ctypes
-                ctypes.windll.kernel32.CloseHandle(self._handle)
+                self._kernel32().CloseHandle(self._handle)
             except (AttributeError, OSError, TypeError):
                 pass
             self._handle = None
@@ -249,8 +268,9 @@ class _WindowsProcessHandle:
             return False
         try:
             import ctypes
-            code = ctypes.c_ulong()
-            if not ctypes.windll.kernel32.GetExitCodeProcess(self._handle, ctypes.byref(code)):
+            from ctypes import wintypes
+            code = wintypes.DWORD()
+            if not self._kernel32().GetExitCodeProcess(self._handle, ctypes.byref(code)):
                 return False
             return int(code.value) == self._STILL_ACTIVE
         except (AttributeError, OSError, TypeError):
@@ -259,8 +279,7 @@ class _WindowsProcessHandle:
     def kill(self) -> None:
         if not self._handle:
             return
-        import ctypes
-        if not ctypes.windll.kernel32.TerminateProcess(self._handle, 1):
+        if not self._kernel32().TerminateProcess(self._handle, 1):
             # Keep the handle open so callers can still observe that the
             # process was not terminated and classify cancellation safely.
             raise OSError("TerminateProcess failed")
@@ -270,9 +289,8 @@ class _WindowsProcessHandle:
         if not self._handle:
             return
         try:
-            import ctypes
             milliseconds = 0xFFFFFFFF if timeout is None else max(0, int(float(timeout) * 1000))
-            result = ctypes.windll.kernel32.WaitForSingleObject(self._handle, milliseconds)
+            result = self._kernel32().WaitForSingleObject(self._handle, milliseconds)
             if result == self._WAIT_TIMEOUT:
                 raise TimeoutError("process wait timed out")
         finally:
@@ -825,6 +843,7 @@ class RuntimeSupervisor:
         self.heartbeat_interval = float(heartbeat_interval) if heartbeat_interval is not None else min(float(lease_seconds) / 3.0, 5.0)
         if self.heartbeat_interval <= 0:
             raise ValueError("heartbeat_interval must be positive")
+        self._active_lock = threading.Lock()
         self._active_processes: dict[str, Any] = {}
         self._active_jobs: dict[str, Any] = {}
         self._shutdown_event = threading.Event()
@@ -1015,7 +1034,8 @@ class RuntimeSupervisor:
         )
         unresolved: list[str] = []
         for task_id, attempt_status, identity in active:
-            process = self._active_processes.get(task_id)
+            with self._active_lock:
+                process = self._active_processes.get(task_id)
             if process is not None and process.is_alive():
                 _terminate_process_tree(process)
                 process.join(5)
@@ -1054,8 +1074,9 @@ class RuntimeSupervisor:
         Job Object handle here so a failed task cannot leak a process or
         resource handle into later Runs.
         """
-        process = self._active_processes.pop(task_id, None)
-        self._active_jobs.pop(task_id, None)
+        with self._active_lock:
+            process = self._active_processes.pop(task_id, None)
+            self._active_jobs.pop(task_id, None)
         if process is None:
             return
         try:
@@ -1901,139 +1922,140 @@ class RuntimeSupervisor:
         """Execute a builtin task in a killable child process."""
         ctx = multiprocessing.get_context("spawn")
         result_queue = ctx.Queue()
-        process = ctx.Process(
-            target=_isolated_executor_worker,
-            args=(
-                str(self.runtime.db.path),
-                str(self.artifacts.data_root),
-                str(self.artifacts.artifacts_dir),
-                str(self.artifacts.staging_dir),
-                str(self.artifacts.quarantine_dir),
-                str(self.artifacts.uploads_dir),
-                compiled.model_dump(mode="json"),
-                claim.run_id,
-                claim.task_id,
-                {
-                    "task_id": claim.task_id,
-                    "owner": claim.owner,
-                    "token": claim.token,
-                    "lease_generation": claim.lease_generation,
-                    "attempt_id": claim.attempt_id,
-                },
-                result_queue,
-            ),
-        )
-        process.start()
-        self._active_processes[claim.task_id] = process
-        self._active_jobs[claim.task_id] = enforce_resource_limits(
-            process,
-            memory_mb=int(compiled.resource_budget.memory_mb),
-            cpu_weight=int(compiled.resource_budget.cpu_weight),
-        )
-        create_time = _process_creation_time(process.pid)
-        if create_time is None or not math.isfinite(create_time) or create_time <= 0:
-            _terminate_process_tree(process)
-            process.join(5)
-            release_resource_limits(process)
-            error = RuntimeError("executor creation identity is unavailable")
-            error.error_code = "EXECUTOR_IDENTITY_UNAVAILABLE"
-            raise error
-        identity = {"pid": process.pid, "create_time": create_time, "job": bool(self._active_jobs[claim.task_id])}
         try:
-            self.runtime.set_executor_identity(claim, json.dumps(identity, sort_keys=True))
-        except Exception:
-            _terminate_process_tree(process)
-            process.join(5)
-            raise
-        timeout = self.timeout_seconds or float(compiled.resource_budget.timeout_seconds)
-        deadline = time.monotonic() + max(0.1, timeout)
-        child_started = time.monotonic()
-        cpu_over_limit_samples = 0
-        next_heartbeat = time.monotonic() + self.heartbeat_interval
-        live_claim = claim
-        while process.is_alive():
-            if self._shutdown_event.is_set():
-                _terminate_process_tree(process)
-                process.join(5)
-                error = RuntimeError("WORKER_SHUTDOWN")
-                error.error_code = "WORKER_SHUTDOWN"
-                raise error
-            current_run = self.runtime.get_run(claim.run_id)
-            if current_run is not None and current_run["status"] in {"cancelling", "cancelled"}:
-                _terminate_process_tree(process)
-                process.join(5)
-                error = RuntimeError("RUN_CANCELLED")
-                error.error_code = "CANCELLED"
-                raise error
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _terminate_process_tree(process)
-                process.join(5)
-                raise TimeoutError("isolated worker exceeded task timeout")
-            process.join(min(0.2, remaining))
-            budget = check_resource_budget(
+            process = ctx.Process(
+                target=_isolated_executor_worker,
+                args=(
+                    str(self.runtime.db.path),
+                    str(self.artifacts.data_root),
+                    str(self.artifacts.artifacts_dir),
+                    str(self.artifacts.staging_dir),
+                    str(self.artifacts.quarantine_dir),
+                    str(self.artifacts.uploads_dir),
+                    compiled.model_dump(mode="json"),
+                    claim.run_id,
+                    claim.task_id,
+                    {
+                        "task_id": claim.task_id,
+                        "owner": claim.owner,
+                        "token": claim.token,
+                        "lease_generation": claim.lease_generation,
+                        "attempt_id": claim.attempt_id,
+                    },
+                    result_queue,
+                ),
+            )
+            process.start()
+            job_enforced = enforce_resource_limits(
                 process,
                 memory_mb=int(compiled.resource_budget.memory_mb),
                 cpu_weight=int(compiled.resource_budget.cpu_weight),
-                sample_interval=min(max(self.heartbeat_interval / 2.0, 0.05), 0.2),
             )
-            # Process CPU accounting is noisy during interpreter start-up
-            # (especially on Windows). Let the first sample settle while
-            # retaining memory enforcement from the first heartbeat.
-            startup_grace = max(0.25, min(self.heartbeat_interval, 2.0))
-            if budget.get("reason") == "cpu":
-                if time.monotonic() - child_started < startup_grace:
-                    cpu_over_limit_samples = 0
-                    budget["exceeded"] = False
-                else:
-                    cpu_over_limit_samples += 1
-                    budget["exceeded"] = cpu_over_limit_samples >= 2
-            else:
-                cpu_over_limit_samples = 0
-            if process.is_alive() and budget.get("exceeded"):
+            with self._active_lock:
+                self._active_processes[claim.task_id] = process
+                self._active_jobs[claim.task_id] = job_enforced
+            create_time = _process_creation_time(process.pid)
+            if create_time is None or not math.isfinite(create_time) or create_time <= 0:
                 _terminate_process_tree(process)
                 process.join(5)
-                self.runtime.append_event(claim.run_id, "task.resource_limit_exceeded", {"task_id": claim.task_id, **budget})
-                error = RuntimeError(f"isolated worker exceeded {budget.get('reason')} resource budget")
-                error.error_code = "RESOURCE_LIMIT"
+                release_resource_limits(process)
+                error = RuntimeError("executor creation identity is unavailable")
+                error.error_code = "EXECUTOR_IDENTITY_UNAVAILABLE"
                 raise error
-            if process.is_alive() and time.monotonic() >= next_heartbeat:
-                try:
-                    live_claim = self.queue.heartbeat(live_claim)
-                except RuntimeError as exc:
-                    terminal = self.runtime._read(
-                        lambda c: c.execute("SELECT status,lease_owner,lease_token,lease_generation FROM tasks WHERE task_id=?", (claim.task_id,)).fetchone()
-                    )
-                    if terminal is not None and terminal[0] in {"succeeded", "failed", "cancelled"}:
-                        # The child may have committed its terminal state a
-                        # few milliseconds before Process.is_alive() observes
-                        # exit.  Do not treat that normal teardown race as a
-                        # stale worker.
-                        next_heartbeat = time.monotonic() + self.heartbeat_interval
-                        continue
+            identity = {"pid": process.pid, "create_time": create_time, "job": bool(job_enforced)}
+            try:
+                self.runtime.set_executor_identity(claim, json.dumps(identity, sort_keys=True))
+            except Exception:
+                _terminate_process_tree(process)
+                process.join(5)
+                raise
+            timeout = self.timeout_seconds or float(compiled.resource_budget.timeout_seconds)
+            deadline = time.monotonic() + max(0.1, timeout)
+            child_started = time.monotonic()
+            cpu_over_limit_samples = 0
+            next_heartbeat = time.monotonic() + self.heartbeat_interval
+            live_claim = claim
+            while process.is_alive():
+                if self._shutdown_event.is_set():
                     _terminate_process_tree(process)
                     process.join(5)
-                    raise RuntimeError("STALE_LEASE") from exc
-                next_heartbeat = time.monotonic() + self.heartbeat_interval
-        self._active_processes.pop(claim.task_id, None)
-        self._active_jobs.pop(claim.task_id, None)
-        release_resource_limits(process)
-        if process.is_alive():
-            _terminate_process_tree(process)
-            process.join(5)
-            raise TimeoutError("isolated worker exceeded task timeout")
-        try:
-            message = result_queue.get(timeout=2)
-        except Empty as exc:
-            error = RuntimeError(f"isolated worker exited without a result (exitcode={process.exitcode})")
-            error.error_code = "WORKER_LOST"
-            raise error from exc
-        except Exception as exc:
-            error = RuntimeError("isolated worker result transport failed")
-            error.error_code = "WORKER_PROTOCOL_ERROR"
-            raise error from exc
+                    error = RuntimeError("WORKER_SHUTDOWN")
+                    error.error_code = "WORKER_SHUTDOWN"
+                    raise error
+                current_run = self.runtime.get_run(claim.run_id)
+                if current_run is not None and current_run["status"] in {"cancelling", "cancelled"}:
+                    _terminate_process_tree(process)
+                    process.join(5)
+                    error = RuntimeError("RUN_CANCELLED")
+                    error.error_code = "CANCELLED"
+                    raise error
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate_process_tree(process)
+                    process.join(5)
+                    raise TimeoutError("isolated worker exceeded task timeout")
+                process.join(min(0.2, remaining))
+                budget = check_resource_budget(
+                    process,
+                    memory_mb=int(compiled.resource_budget.memory_mb),
+                    cpu_weight=int(compiled.resource_budget.cpu_weight),
+                    sample_interval=min(max(self.heartbeat_interval / 2.0, 0.05), 0.2),
+                )
+                startup_grace = max(0.25, min(self.heartbeat_interval, 2.0))
+                if budget.get("reason") == "cpu":
+                    if time.monotonic() - child_started < startup_grace:
+                        cpu_over_limit_samples = 0
+                        budget["exceeded"] = False
+                    else:
+                        cpu_over_limit_samples += 1
+                        budget["exceeded"] = cpu_over_limit_samples >= 2
+                else:
+                    cpu_over_limit_samples = 0
+                if process.is_alive() and budget.get("exceeded"):
+                    _terminate_process_tree(process)
+                    process.join(5)
+                    self.runtime.append_event(claim.run_id, "task.resource_limit_exceeded", {"task_id": claim.task_id, **budget})
+                    error = RuntimeError(f"isolated worker exceeded {budget.get('reason')} resource budget")
+                    error.error_code = "RESOURCE_LIMIT"
+                    raise error
+                if process.is_alive() and time.monotonic() >= next_heartbeat:
+                    try:
+                        live_claim = self.queue.heartbeat(live_claim)
+                    except RuntimeError as exc:
+                        terminal = self.runtime._read(
+                            lambda c: c.execute("SELECT status,lease_owner,lease_token,lease_generation FROM tasks WHERE task_id=?", (claim.task_id,)).fetchone()
+                        )
+                        if terminal is not None and terminal[0] in {"succeeded", "failed", "cancelled"}:
+                            next_heartbeat = time.monotonic() + self.heartbeat_interval
+                            continue
+                        _terminate_process_tree(process)
+                        process.join(5)
+                        raise RuntimeError("STALE_LEASE") from exc
+                    next_heartbeat = time.monotonic() + self.heartbeat_interval
+            with self._active_lock:
+                self._active_processes.pop(claim.task_id, None)
+                self._active_jobs.pop(claim.task_id, None)
+            release_resource_limits(process)
+            if process.is_alive():
+                _terminate_process_tree(process)
+                process.join(5)
+                raise TimeoutError("isolated worker exceeded task timeout")
+            try:
+                message = result_queue.get(timeout=2)
+            except Empty as exc:
+                error = RuntimeError(f"isolated worker exited without a result (exitcode={process.exitcode})")
+                error.error_code = "WORKER_LOST"
+                raise error from exc
+            except Exception as exc:
+                error = RuntimeError("isolated worker result transport failed")
+                error.error_code = "WORKER_PROTOCOL_ERROR"
+                raise error from exc
         finally:
-            result_queue.close()
+            try:
+                result_queue.close()
+                result_queue.join_thread()
+            except Exception:
+                pass
         try:
             if not isinstance(message, tuple) or not message:
                 raise ValueError("invalid IPC envelope")
@@ -2100,17 +2122,20 @@ class RuntimeSupervisor:
             return completed
         finally:
             self._worker_stop_events.pop(worker_id, None)
-            for process in list(self._active_processes.values()):
+            with self._active_lock:
+                snapshot_processes = list(self._active_processes.items())
+            for _task_id, process in snapshot_processes:
                 if process.is_alive():
                     _terminate_process_tree(process)
                 join = getattr(process, "join", None)
                 if callable(join):
                     join(5)
-            for task_id, process in list(self._active_processes.items()):
-                if not process.is_alive():
-                    release_resource_limits(process)
-                    self._active_processes.pop(task_id, None)
-                    self._active_jobs.pop(task_id, None)
+            with self._active_lock:
+                for task_id, process in list(self._active_processes.items()):
+                    if not process.is_alive():
+                        release_resource_limits(process)
+                        self._active_processes.pop(task_id, None)
+                        self._active_jobs.pop(task_id, None)
             # A normal stop may happen before a lease expires. Reconcile the
             # worker-owned rows now so another worker can claim them safely.
             affected_runs = self.runtime._read(
@@ -2155,11 +2180,13 @@ class RuntimeSupervisor:
         active = self.runtime._read(
             lambda c: c.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('leased','running','validating')").fetchone()[0]
         )
+        with self._active_lock:
+            active_processes_count = sum(1 for process in self._active_processes.values() if process.is_alive())
         return {
             "worker_id": self._worker_id,
             "running": bool(self._worker_thread and self._worker_thread.is_alive()),
             "active_tasks": int(active),
-            "active_processes": sum(1 for process in self._active_processes.values() if process.is_alive()),
+            "active_processes": active_processes_count,
             "shutdown_requested": self._shutdown_event.is_set(),
             "resource_limits": self.resource_health(),
         }

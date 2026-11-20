@@ -380,11 +380,13 @@ def get_run(request: Request, run_id: str):
 
 
 async def _event_stream(runtime: RuntimeStore, run_id: str, cursor: int) -> AsyncIterator[str]:
+    import asyncio
+
     sent_terminal = False
     last_id = cursor
     idle = 0
     while True:
-        events = _events_after(runtime, run_id, last_id)
+        events = await run_in_threadpool(_events_after, runtime, run_id, last_id)
         if events:
             for event in events:
                 last_id = event["event_id"]
@@ -395,7 +397,7 @@ async def _event_stream(runtime: RuntimeStore, run_id: str, cursor: int) -> Asyn
                 return
             idle = 0
         else:
-            snapshot = _snapshot(runtime, run_id)
+            snapshot = await run_in_threadpool(_snapshot, runtime, run_id)
             if snapshot and snapshot["status"] in TERMINAL_RUN_STATUSES:
                 # A terminal commit can land after the empty event poll. Drain
                 # that committed tail before closing the display channel.
@@ -405,7 +407,6 @@ async def _event_stream(runtime: RuntimeStore, run_id: str, cursor: int) -> Asyn
             idle += 1
             if idle % 60 == 0:
                 yield ": heartbeat\n\n"
-        import asyncio
         await asyncio.sleep(0.25)
 
 
@@ -812,7 +813,8 @@ async def upload_runtime_artifact(
             max_count=int(settings.UPLOAD_ZIP_MAX_FILE_COUNT),
         )
         validate_declarations(inspection, crs, bbox)
-        artifact = artifacts.publish_staged(
+        artifact = await run_in_threadpool(
+            artifacts.publish_staged,
             staged,
             origin="upload",
             artifact_type="File",

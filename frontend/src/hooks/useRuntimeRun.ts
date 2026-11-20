@@ -180,14 +180,83 @@ async function readRuntimeStream(response: Response, onEvent: (event: RuntimeEve
 
 export type RuntimeConnectionState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'closed';
 
+const INITIAL_RETRY_DELAY_MS = 250;
+const MAX_RETRY_DELAY_MS = 4000;
+
+function retryDelayMs(attempt: number): number {
+  return Math.min(INITIAL_RETRY_DELAY_MS * Math.pow(2, Math.max(0, attempt)), MAX_RETRY_DELAY_MS);
+}
+
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isNonRetryableClientError(error: unknown): boolean {
+  return error instanceof RuntimeApiError
+    && error.code !== 'INVALID_EVENT_CURSOR'
+    && error.status >= 400
+    && error.status < 500
+    && ![408, 429].includes(error.status);
+}
+
+function mergeRebasedSnapshot(snapshot: RunSnapshot, prior: RunProjectionState | null): RunProjectionState {
+  const base = projectionFromSnapshot(snapshot);
+  if (!prior || prior.run_id !== snapshot.run_id) return base;
+  return {
+    ...base,
+    events: prior.events,
+    seen_event_ids: new Set(prior.seen_event_ids),
+    map_layers: snapshot.active_plan?.plan_id === prior.active_plan?.plan_id ? prior.map_layers : {},
+  };
+}
+
+function mergeCheckpointSnapshot(current: RunProjectionState, refreshed: RunSnapshot, terminalObserved: boolean): RunProjectionState {
+  const base = projectionFromSnapshot(refreshed);
+  return {
+    ...base,
+    // Keep the SSE stream's accepted cursor so intermediate frames already
+    // queued in the stream are never dropped from projection.events.
+    status: terminalObserved ? refreshed.status : current.status,
+    run_version: Math.max(current.run_version, refreshed.run_version),
+    last_event_id: current.last_event_id,
+    last_seq: current.last_seq,
+    events: current.events,
+    seen_event_ids: current.seen_event_ids,
+    map_layers: refreshed.active_plan?.plan_id === current.active_plan?.plan_id ? current.map_layers : {},
+  };
+}
+
 export function useRuntimeRun(runId: string | null) {
-  const [projection, setProjection] = useState<RunProjectionState | null>(null);
-  const [error, setError] = useState<Error | null>(null);
+  const [projection, setProjectionState] = useState<RunProjectionState | null>(null);
+  const [errorState, setErrorState] = useState<{ runId: string | null; error: Error | null }>({
+    runId: null, error: null,
+  });
   const [transport, setTransport] = useState<{ runId: string | null; terminalSettled: boolean; connectionState: RuntimeConnectionState }>({
     runId: null, terminalSettled: false, connectionState: 'idle',
   });
+  const projectionRef = useRef<RunProjectionState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const resumeWhenOnlineRef = useRef(false);
+
+  const publishProjection = useCallback((next: RunProjectionState | null) => {
+    projectionRef.current = next;
+    setProjectionState(next);
+  }, []);
+
+  const publishError = useCallback((targetRunId: string | null, nextError: Error | null) => {
+    setErrorState({ runId: targetRunId, error: nextError });
+  }, []);
 
   const stop = useCallback(() => {
     resumeWhenOnlineRef.current = false;
@@ -198,9 +267,12 @@ export function useRuntimeRun(runId: string | null) {
 
   const connect = useCallback(async () => {
     stop();
-    setError(null);
+    publishError(runId, null);
     setTransport({ runId, terminalSettled: false, connectionState: runId ? 'connecting' : 'idle' });
-    if (!runId) { setProjection(null); return; }
+    if (!runId) { publishProjection(null); return; }
+    if (projectionRef.current && projectionRef.current.run_id !== runId) {
+      publishProjection(null);
+    }
     if (navigator.onLine === false) {
       resumeWhenOnlineRef.current = true;
       setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
@@ -209,63 +281,64 @@ export function useRuntimeRun(runId: string | null) {
     const abort = new AbortController();
     abortRef.current = abort;
     try {
-      const snapshot = await getRuntimeRun(runId, abort.signal);
-      if (abort.signal.aborted || abortRef.current !== abort) return;
-      let current = projectionFromSnapshot(snapshot);
-      let terminalObserved = ['completed', 'failed', 'cancelled'].includes(snapshot.status);
-      let needsRebase = false;
-      setProjection(current);
-      setTransport({ runId, terminalSettled: terminalObserved, connectionState: terminalObserved ? 'closed' : 'connecting' });
-      if (terminalObserved) abort.abort();
+      let current: RunProjectionState | null = projectionRef.current?.run_id === runId ? projectionRef.current : null;
+      let terminalObserved = false;
+      let needsRebase = true;
+      let retryAttempt = 0;
+
       while (!abort.signal.aborted && !terminalObserved) {
         try {
-          if (needsRebase) {
-            // Retry a failed rebase snapshot before opening another stream.
-            // Never tail again using a cursor already known to be invalid.
-            const rebased = await getRuntimeRun(runId, abort.signal);
+          if (!current || needsRebase) {
+            // Initial snapshot and rebase fetches share transient retry and
+            // offline recovery, while permanent 4xx errors fail fast.
+            const snapshot = await getRuntimeRun(runId, abort.signal);
             if (abort.signal.aborted || abortRef.current !== abort) break;
-            current = projectionFromSnapshot(rebased);
-            terminalObserved = ['completed', 'failed', 'cancelled'].includes(rebased.status);
+            current = mergeRebasedSnapshot(snapshot, current);
+            terminalObserved = ['completed', 'failed', 'cancelled'].includes(snapshot.status);
             needsRebase = false;
-            setError(null);
-            setProjection(current);
-            setTransport({ runId, terminalSettled: terminalObserved, connectionState: terminalObserved ? 'closed' : 'reconnecting' });
+            retryAttempt = 0;
+            publishError(runId, null);
+            publishProjection(current);
+            setTransport({
+              runId,
+              terminalSettled: terminalObserved,
+              connectionState: terminalObserved ? 'closed' : 'connecting',
+            });
             if (terminalObserved) { abort.abort(); break; }
           }
           const response = await runtimeEventsStream(runId, current.last_event_id, abort.signal);
           if (abort.signal.aborted || abortRef.current !== abort) break;
+          retryAttempt = 0;
           setTransport({ runId, terminalSettled: false, connectionState: 'live' });
           await readRuntimeStream(response, async (event) => {
-            if (abort.signal.aborted || abortRef.current !== abort) return;
+            if (abort.signal.aborted || abortRef.current !== abort || !current) return;
             const next = reduceRuntimeEvent(current, event);
             if (next === current) return;
             // A generic status projection precedes the named terminal event.
             // Only a terminal snapshot or that accepted final frame ends replay.
-            if (next !== current && ['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) terminalObserved = true;
+            if (['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) terminalObserved = true;
             current = next;
-            setError(null);
-            setProjection(current);
+            retryAttempt = 0;
+            publishError(runId, null);
+            publishProjection(current);
             // These checkpoints can change persisted bindings, outputs or attempts.
             // Serial processing prevents a slow snapshot from overwriting newer SSE
             // facts. Text/progress frames never cause a snapshot request.
-            const checkpoint = ['run.ready', 'task.started', 'task.completed', 'task.cache_hit', 'task.empty',
-              'task.failed', 'task.retry_wait', 'task.cancelled', 'run.awaiting_input',
-              'run.completed', 'run.failed', 'run.cancelled'].includes(event.type);
-            if (checkpoint && current.tasks.length > 0) {
+            const isProgressCheckpoint = ['run.ready', 'task.started', 'task.completed', 'task.cache_hit',
+              'task.empty', 'task.failed', 'task.retry_wait', 'task.cancelled', 'run.awaiting_input'].includes(event.type);
+            const isTerminalCheckpoint = ['run.completed', 'run.failed', 'run.cancelled'].includes(event.type);
+            if (isProgressCheckpoint || (isTerminalCheckpoint && current.tasks.length > 0)) {
               try {
                 const refreshed = await getRuntimeRun(runId, abort.signal);
-                if (abort.signal.aborted || abortRef.current !== abort) return;
+                if (abort.signal.aborted || abortRef.current !== abort || !current) return;
                 // A stale proxy response cannot roll the event cursor backwards.
                 if (refreshed.last_seq >= current.last_seq) {
-                  current = { ...projectionFromSnapshot(refreshed), events: current.events,
-                    seen_event_ids: current.seen_event_ids,
-                    map_layers: refreshed.active_plan?.plan_id === current.active_plan?.plan_id ? current.map_layers : {} };
-                  terminalObserved = ['completed', 'failed', 'cancelled'].includes(refreshed.status);
-                  setProjection(current);
+                  current = mergeCheckpointSnapshot(current, refreshed, terminalObserved);
+                  publishProjection(current);
                 }
               } catch (refreshError) {
                 if (abort.signal.aborted || abortRef.current !== abort) return;
-                setError(refreshError as Error);
+                publishError(runId, refreshError as Error);
               }
             }
             if (terminalObserved) {
@@ -275,28 +348,30 @@ export function useRuntimeRun(runId: string | null) {
           }, abort.signal);
         } catch (streamError) {
           if (abort.signal.aborted || abortRef.current !== abort) break;
-          setError(streamError as Error);
-          setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
+          publishError(runId, streamError as Error);
           if (streamError instanceof EventSequenceGapError || (streamError instanceof RuntimeApiError && streamError.code === 'INVALID_EVENT_CURSOR')) {
             needsRebase = true;
-          } else if (streamError instanceof RuntimeApiError && streamError.status >= 400
-              && streamError.status < 500 && ![408, 429].includes(streamError.status)) {
+            setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
+          } else if (isNonRetryableClientError(streamError)) {
             // Missing/forbidden runs require user action, not an endless poll.
             throw streamError;
+          } else {
+            setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
           }
         }
         if (!abort.signal.aborted && !terminalObserved) {
           setTransport({ runId, terminalSettled: false, connectionState: 'reconnecting' });
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+          await sleepAbortable(retryDelayMs(retryAttempt++), abort.signal);
         }
       }
     } catch (requestError) {
       if (!abort.signal.aborted && abortRef.current === abort) {
-        setError(requestError as Error);
+        abortRef.current = null;
+        publishError(runId, requestError as Error);
         setTransport({ runId, terminalSettled: false, connectionState: 'closed' });
       }
     }
-  }, [runId, stop]);
+  }, [publishError, publishProjection, runId, stop]);
 
   useEffect(() => {
     const offline = () => {
@@ -330,6 +405,7 @@ export function useRuntimeRun(runId: string | null) {
     projection: projection?.run_id === runId ? projection : null,
     terminalSettled: transport.runId === runId && !!runId && transport.terminalSettled,
     connectionState: transport.runId === runId ? transport.connectionState : runId ? 'connecting' as const : 'idle' as const,
-    error, connect, stop, artifactUrl, loadArtifact,
+    error: errorState.runId === runId ? errorState.error : null,
+    connect, stop, artifactUrl, loadArtifact,
   };
 }

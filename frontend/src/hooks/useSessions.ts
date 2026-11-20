@@ -17,16 +17,18 @@ import {
 } from '@/api/client';
 
 const MSG_KEY_PREFIX = 'gismind.messages.';
+const ACTIVE_RUN_KEY_PREFIX = 'gismind.active_run.';
 
 /** 把 sessions 按 updated_at 降序排序（新的在前）。 */
 function sortByUpdatedAt(items: SessionMeta[]): SessionMeta[] {
   return [...items].sort((a, b) => b.updated_at - a.updated_at);
 }
 
-/** 兜底清理 ChatPanel 使用的消息缓存。 */
-function clearMessageCache(id: string): void {
+/** 兜底清理 ChatPanel 使用的消息缓存与活动 Run 缓存。 */
+function clearSessionCache(id: string): void {
   try {
     localStorage.removeItem(MSG_KEY_PREFIX + id);
+    localStorage.removeItem(ACTIVE_RUN_KEY_PREFIX + id);
   } catch {
     /* noop */
   }
@@ -72,7 +74,7 @@ export function useSessions(): UseSessionsApi {
   const addCreated = useCallback((created: Awaited<ReturnType<typeof apiCreateSession>>) => {
     publishSessions([
       ...stateRef.current.sessions.filter(item => item.id !== created.id),
-      { ...created, message_count: 0, tool_count: 0, has_map: false },
+      { ...created },
     ]);
   }, [publishSessions]);
 
@@ -185,7 +187,7 @@ export function useSessions(): UseSessionsApi {
     setLoading(false);
     const remaining = sortByUpdatedAt(stateRef.current.sessions.filter(item => item.id !== id));
     publishSessions(remaining);
-    clearMessageCache(id);
+    clearSessionCache(id);
     setError(null);
     // Decide at completion, not from the selection before awaiting DELETE.
     if (stateRef.current.activeId !== id) return;

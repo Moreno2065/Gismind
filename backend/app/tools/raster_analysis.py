@@ -13,6 +13,7 @@ import base64
 import ast
 import io
 import logging
+import math
 import tempfile
 import os
 from typing import Any, Optional
@@ -95,8 +96,15 @@ class RasterAnalyzer:
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp_path = tmp.name
         tmp.close()
-        with rasterio.open(tmp_path, "w", **out_profile) as dst:
-            dst.write(array, 1)
+        try:
+            with rasterio.open(tmp_path, "w", **out_profile) as dst:
+                dst.write(array, 1)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         return tmp_path
 
     @staticmethod
@@ -274,16 +282,16 @@ class RasterAnalyzer:
             from skimage.transform import resize as sk_resize
 
             scale = max_dim / max(h, w)
-            new_h, new_w = int(h * scale), int(w * scale)
+            new_h, new_w = max(1, int(h * scale)), max(1, int(w * scale))
             arr = sk_resize(arr, (new_h, new_w), preserve_range=True, order=1, anti_aliasing=True)
             import rasterio
 
             transform = rasterio.Affine(
-                transform.a / (w / new_w),
+                transform.a * (w / new_w),
                 transform.b,
                 transform.c,
                 transform.d,
-                transform.e / (h / new_h),
+                transform.e * (h / new_h),
                 transform.f,
             )
 
@@ -1095,26 +1103,39 @@ class RasterAnalyzer:
         """
         try:
             arr, profile = self._read_single_band(dem_path)
+            arr_f = arr.astype(np.float64)
+            nodata = profile.get("nodata")
+            nodata_mask = np.isnan(arr_f)
+            if nodata is not None and np.isfinite(nodata):
+                nodata_mask |= arr_f == nodata
+                arr_f = np.where(nodata_mask, np.nan, arr_f)
             transform = profile["transform"]
             dy = abs(transform[4])
             dx = abs(transform[0])
-            dzdy, dzdx = np.gradient(arr, dy, dx)
+            crs = profile.get("crs")
+            if crs is not None and getattr(crs, "is_geographic", False):
+                # Convert degrees to approximate meters at the raster center latitude.
+                center_lat = transform[5] + transform[4] * (arr_f.shape[0] / 2.0)
+                meters_per_deg_lat = 111320.0
+                meters_per_deg_lon = max(1.0, 111320.0 * math.cos(math.radians(center_lat)))
+                dy *= meters_per_deg_lat
+                dx *= meters_per_deg_lon
+            dzdy, dzdx = np.gradient(arr_f, dy, dx)
 
-            az_rad = np.radians(360.0 - azimuth + 90.0)  # 转为数学角
+            az_geo_rad = np.radians(azimuth % 360.0)
             alt_rad = np.radians(altitude)
 
             slope_rad = np.arctan(np.sqrt(dzdx**2 + dzdy**2))
-            aspect_rad = np.arctan2(dzdy, -dzdx)
-            # 从数学角度（0=东，逆时针）转为地理方位弧度（0=北，顺时针）
-            aspect_geo_rad = np.pi / 2 - aspect_rad
-            aspect_geo_rad = np.where(aspect_geo_rad < 0, aspect_geo_rad + 2 * np.pi, aspect_geo_rad)
+            # Compass downhill aspect (0=North, clockwise) for north-up grid where +row is South
+            aspect_geo_rad = np.mod(np.arctan2(-dzdx, dzdy), 2 * np.pi)
 
             hs = (
-                np.cos(alt_rad) * np.cos(slope_rad)
-                + np.sin(alt_rad) * np.sin(slope_rad) * np.cos(az_rad - aspect_geo_rad)
+                np.sin(alt_rad) * np.cos(slope_rad)
+                + np.cos(alt_rad) * np.sin(slope_rad) * np.cos(az_geo_rad - aspect_geo_rad)
             )
+            hs = np.where(np.isfinite(hs) & ~nodata_mask, hs, 0.0)
             # 限制到 [0, 255]
-            hs = np.clip(hs * 255, 0, 255).astype(np.uint8)
+            hs = np.clip(hs * 255.0, 0, 255).astype(np.uint8)
 
             if dst_path is None:
                 dst_path = self._to_tempfile(hs, profile)
@@ -1168,20 +1189,31 @@ class RasterAnalyzer:
             import geopandas as gpd
 
             arr, profile = self._read_single_band(dem_path)
+            arr_f = arr.astype(np.float64)
+            nodata = profile.get("nodata")
+            if nodata is not None and np.isfinite(nodata):
+                arr_f = np.where(arr_f == nodata, np.nan, arr_f)
+            if np.all(np.isnan(arr_f)):
+                return {"status": "error", "message": "DEM 无有效像元，无法生成等高线"}
 
+            min_val = float(np.nanmin(arr_f))
+            max_val = float(np.nanmax(arr_f))
             if interval is None:
                 # 自动估算等高距
-                data_range = float(np.nanmax(arr) - np.nanmin(arr))
+                data_range = max_val - min_val
                 interval = max(data_range / 20, 1.0)
+            elif interval <= 0 or not math.isfinite(float(interval)):
+                return {"status": "error", "message": "等高距 interval 必须为正数"}
 
-            levels = np.arange(
-                np.floor(np.nanmin(arr) / interval) * interval,
-                np.ceil(np.nanmax(arr) / interval) * interval + interval,
-                interval,
-            )
+            start_level = np.floor(min_val / interval) * interval
+            stop_level = np.ceil(max_val / interval) * interval + interval
+            estimated_levels = int((stop_level - start_level) / interval) + 1
+            if estimated_levels > 2000:
+                return {"status": "error", "message": f"等高线层级过多 ({estimated_levels} > 2000)，请增大 interval"}
+            levels = np.arange(start_level, stop_level, interval)
 
             fig, ax = plt.subplots()
-            contour_set = ax.contour(arr, levels=levels)
+            contour_set = ax.contour(arr_f, levels=levels)
             plt.close(fig)
 
             transform = profile["transform"]
@@ -1192,8 +1224,8 @@ class RasterAnalyzer:
                 for seg in seg_set:
                     if len(seg) < 2:
                         continue
-                    # 从像素坐标转 CRS 坐标
-                    coords = [transform * (x, y) for x, y in seg]
+                    # 从像素中心坐标转 CRS 坐标
+                    coords = [transform * (x + 0.5, y + 0.5) for x, y in seg]
                     line = LineString(coords)
                     if not line.is_empty:
                         lines.append(line)
@@ -1305,18 +1337,18 @@ class RasterAnalyzer:
             {"status": "success", "data": <RasterLayer dict>}
         """
         try:
+            from numpy.lib.stride_tricks import sliding_window_view
+
             arr, profile = self._read_single_band(dem_path)
-
-            def _tri_fn(window: np.ndarray) -> float:
-                center = window[1, 1]
-                diffs = np.array([
-                    window[0, 0], window[0, 1], window[0, 2],
-                    window[1, 0], window[1, 2],
-                    window[2, 0], window[2, 1], window[2, 2],
-                ])
-                return float(np.sqrt(np.mean((center - diffs) ** 2)))
-
-            result = self._focal_window(arr.astype(np.float32), 1, _tri_fn)
+            arr_f = arr.astype(np.float32)
+            nodata = profile.get("nodata")
+            if nodata is not None and np.isfinite(nodata):
+                arr_f = np.where(arr_f == nodata, np.nan, arr_f)
+            padded = np.pad(arr_f, 1, mode="edge")
+            windows = sliding_window_view(padded, (3, 3))
+            diffs = windows - arr_f[..., None, None]
+            result = np.sqrt(np.nansum(diffs ** 2, axis=(-2, -1)) / 8.0).astype(np.float32)
+            result = np.where(np.isnan(arr_f), np.nan, result)
             raster_layer = self._to_raster_layer(
                 result,
                 profile["transform"],
@@ -1350,14 +1382,17 @@ class RasterAnalyzer:
             {"status": "success", "data": <RasterLayer dict>}
         """
         try:
+            from numpy.lib.stride_tricks import sliding_window_view
+
             arr, profile = self._read_single_band(dem_path)
-
-            def _tpi_fn(window: np.ndarray) -> float:
-                center = window[window.shape[0] // 2, window.shape[1] // 2]
-                neigh_mean = np.mean(window)
-                return float(center - neigh_mean)
-
-            result = self._focal_window(arr.astype(np.float32), radius, _tpi_fn)
+            arr_f = arr.astype(np.float32)
+            nodata = profile.get("nodata")
+            if nodata is not None and np.isfinite(nodata):
+                arr_f = np.where(arr_f == nodata, np.nan, arr_f)
+            win = 2 * int(radius) + 1
+            padded = np.pad(arr_f, int(radius), mode="edge")
+            windows = sliding_window_view(padded, (win, win))
+            result = (arr_f - np.nanmean(windows, axis=(-2, -1))).astype(np.float32)
             raster_layer = self._to_raster_layer(
                 result,
                 profile["transform"],
@@ -1385,12 +1420,17 @@ class RasterAnalyzer:
             {"status": "success", "data": <RasterLayer dict>}
         """
         try:
+            from numpy.lib.stride_tricks import sliding_window_view
+
             arr, profile = self._read_single_band(dem_path)
-
-            def _roughness_fn(window: np.ndarray) -> float:
-                return float(np.max(window) - np.min(window))
-
-            result = self._focal_window(arr.astype(np.float32), 1, _roughness_fn)
+            arr_f = arr.astype(np.float32)
+            nodata = profile.get("nodata")
+            if nodata is not None and np.isfinite(nodata):
+                arr_f = np.where(arr_f == nodata, np.nan, arr_f)
+            padded = np.pad(arr_f, 1, mode="edge")
+            windows = sliding_window_view(padded, (3, 3))
+            result = (np.nanmax(windows, axis=(-2, -1)) - np.nanmin(windows, axis=(-2, -1))).astype(np.float32)
+            result = np.where(np.isnan(arr_f), np.nan, result)
             raster_layer = self._to_raster_layer(
                 result,
                 profile["transform"],

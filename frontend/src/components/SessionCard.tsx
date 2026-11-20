@@ -11,8 +11,8 @@ interface Props {
   meta: SessionMeta;
   active: boolean;
   onActivate: () => void;
-  onRename: (newTitle: string) => void;
-  onDelete: () => void;
+  onRename: (newTitle: string) => void | Promise<void>;
+  onDelete: () => void | Promise<void>;
 }
 
 /** 从 session id 末 4 位 hex 推导出显示用序列号 STM-XXXX。 */
@@ -54,7 +54,7 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
     (e: React.MouseEvent) => {
       e.stopPropagation();
       const ok = window.confirm(`Delete dispatch ${serial}?`);
-      if (ok) onDelete();
+      if (ok) void Promise.resolve(onDelete()).catch(() => { /* handled by session hook */ });
     },
     [onDelete, serial],
   );
@@ -62,7 +62,7 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
   const handleCommit = useCallback(
     (newTitle: string) => {
       setRenaming(false);
-      onRename(newTitle);
+      void Promise.resolve(onRename(newTitle)).catch(() => { /* handled by session hook */ });
     },
     [onRename],
   );
@@ -71,31 +71,8 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
     setRenaming(false);
   }, []);
 
-  const handleActivateKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        onActivate();
-      }
-    },
-    [onActivate],
-  );
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={renaming ? undefined : onActivate}
-      onKeyDown={renaming ? undefined : handleActivateKeyDown}
-      className={cn(
-        'group relative cursor-pointer select-none',
-        'rounded-sm border px-3 py-2',
-        'transition-colors duration-150 motion-reduce:transition-none',
-        active
-          ? 'border-l-2 border-l-amber border-r border-y-ink-700 bg-amber/5'
-          : 'border-ink-700 bg-ink-800/60 hover:border-amber/40',
-      )}
-    >
+  const body = (
+    <>
       {/* 顶部：序列号 + has_map 标（tool_count 移到下方 meta strip，避免与 hover 按钮重叠） */}
       <div className="mb-1 flex items-center justify-between font-mono text-[10px] leading-none">
         <span
@@ -145,15 +122,45 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
 
       {/* meta strip */}
       <div className="mt-1.5 flex items-center justify-between font-mono text-[9px] leading-none text-ink-500">
-        <span className="uppercase tracking-[0.18em]">
-          ⌗ {meta.tool_count} tools
-        </span>
+        {typeof meta.tool_count === 'number' ? (
+          <span className="uppercase tracking-[0.18em]">
+            ⌗ {meta.tool_count} tools
+          </span>
+        ) : (
+          <span />
+        )}
         <span className="uppercase tracking-[0.18em]" title={new Date(meta.updated_at).toISOString()}>
           ⟲ {rel}
         </span>
       </div>
+    </>
+  );
 
-      {/* hover-only 操作图标 */}
+  return (
+    <div
+      className={cn(
+        'group relative select-none',
+        'rounded-sm border',
+        'transition-colors duration-150 motion-reduce:transition-none',
+        active
+          ? 'border-l-2 border-l-amber border-r border-y-ink-700 bg-amber/5'
+          : 'border-ink-700 bg-ink-800/60 hover:border-amber/40',
+      )}
+    >
+      {renaming ? (
+        <div className="px-3 py-2">{body}</div>
+      ) : (
+        <button
+          type="button"
+          onClick={onActivate}
+          aria-current={active ? 'true' : undefined}
+          className="block w-full cursor-pointer px-3 py-2 text-left focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber"
+        >
+          {body}
+        </button>
+      )}
+
+      {/* hover / focus-within 操作图标（与激活按钮平级，避免嵌套交互控件） */}
       {!renaming && (
         <>
           <button
@@ -168,7 +175,8 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
               'font-mono text-[12px] text-ink-500',
               'opacity-0 transition-opacity duration-150',
               'hover:bg-ink-900 hover:text-amber',
-              'group-hover:opacity-100',
+              'focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber',
+              'group-hover:opacity-100 group-focus-within:opacity-100',
             )}
           >
             ✎
@@ -185,7 +193,8 @@ export function SessionCard({ meta, active, onActivate, onRename, onDelete }: Pr
               'font-mono text-[12px] text-ink-500',
               'opacity-0 transition-opacity duration-150',
               'hover:bg-ink-900 hover:text-signal-error',
-              'group-hover:opacity-100',
+              'focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-amber',
+              'group-hover:opacity-100 group-focus-within:opacity-100',
             )}
           >
             ×

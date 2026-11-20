@@ -16,9 +16,10 @@ export function ThemeToggle({ theme, onChange }: ThemeToggleProps) {
   // 键盘快捷键：按 t 键切主题（输入框聚焦时不响应，避免输入字符 't'）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 't' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (e.isComposing || e.key !== 't' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
       e.preventDefault();
       onChange(theme === 'dark' ? 'light' : 'dark');
     };

@@ -1179,18 +1179,19 @@ def test_gc_confirmation_does_not_hold_sqlite_write_lock_while_hashing(tmp_path,
         conn.execute("UPDATE artifacts SET created_at=? WHERE artifact_id=?", (old, artifact["artifact_id"]))
     manifest = store.candidate_manifest()
     canonical = store.cas_path(artifact["content_hash"])
-    original_read_bytes = Path.read_bytes
+    original_file_digest = hashlib.file_digest
     read_started = threading.Event()
     release_read = threading.Event()
 
-    def blocked_read(path):
-        if path == canonical:
+    def blocked_digest(stream, digest):
+        name = getattr(stream, "name", None)
+        if name and Path(name).resolve() == canonical.resolve():
             read_started.set()
             if not release_read.wait(timeout=5):
                 raise AssertionError("test did not release the CAS read")
-        return original_read_bytes(path)
+        return original_file_digest(stream, digest)
 
-    monkeypatch.setattr(Path, "read_bytes", blocked_read)
+    monkeypatch.setattr(hashlib, "file_digest", blocked_digest)
     confirmed = []
     confirm_errors = []
     writer_errors = []

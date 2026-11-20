@@ -145,11 +145,12 @@ class POIQuery:
 
     @staticmethod
     def _sanitize_overpass_tag(tag: str) -> str:
-        """转义 Overpass QL 中的特殊字符，防止注入。
+        """转义 Overpass QL 正则及字符串中的特殊字符，防止注入。"""
+        import re as _re
 
-        Overpass QL 字符串用双引号包裹，需要转义 " 和 \\ 字符。
-        """
-        return tag.replace("\\", "\\\\").replace('"', '\\"')
+        cleaned = tag.replace("\r", " ").replace("\n", " ")
+        escaped = _re.escape(cleaned)
+        return escaped.replace('"', '\\"')
 
     def query_osm(self, tag: str, bbox: tuple) -> list[dict]:
         """OSM Overpass QL 查询。
@@ -292,8 +293,13 @@ class POIQuery:
             # 其他意外异常也降级，避免 Tool 抛错打断 React Loop
             logger.warning("amap unexpected error, fallback to osm: %s", e)
 
-        # 2. OSM 兜底
-        bbox = self._radius_to_bbox(location, radius)
+        # 2. OSM 兜底（OSM 使用 WGS84；国内 GCJ02 坐标需先转 WGS84 再构建 bbox）
+        osm_center = location
+        if self._is_china_bbox((location[0], location[1], location[0], location[1])):
+            from app.tools.geo_transform import gcj02_to_wgs84
+
+            osm_center = gcj02_to_wgs84(location[0], location[1])
+        bbox = self._radius_to_bbox(osm_center, radius)
         try:
             osm_results = self.query_osm(query, bbox)
         except (requests.Timeout, requests.ConnectionError) as e:

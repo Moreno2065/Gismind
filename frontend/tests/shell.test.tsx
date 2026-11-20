@@ -49,4 +49,13 @@ describe('responsive workspace shell', () => {
     expect(screen.getByRole('button', { name: /新建会话/ })).toBeTruthy();
     expect(screen.queryByText(/⌘|archived|dispatch/i)).toBeNull();
   });
+
+  it('does not render undefined in HealthPill tooltip when checks is omitted', async () => {
+    const client = await import('@/api/client');
+    vi.spyOn(client, 'getHealth').mockResolvedValueOnce({ status: 'ok', version: '2.0' });
+    render(<App />);
+    const status = await screen.findByRole('status', { name: '运行正常' });
+    expect(status.getAttribute('title')).toBe('运行正常 · v2.0');
+    expect(status.getAttribute('title')).not.toContain('undefined');
+  });
 });

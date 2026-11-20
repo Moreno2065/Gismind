@@ -89,13 +89,13 @@ def check_resource_budget(process: Any, *, memory_mb: int, cpu_weight: int, samp
     # configured weight as the actual limiting scale.
     elif int(cpu_weight) > 0 and cpu > float(cpu_weight) * 150.0:
         reason = "cpu"
-    result = {"exceeded": reason is not None, "reason": reason, "memory_mb": memory, "cpu_percent": cpu}
-    try:
-        import psutil
-    except (ImportError, AttributeError):
-        psutil = None
-    if sampler_injected or psutil is None:
-        result["available"] = True
+    result = {
+        "exceeded": reason is not None,
+        "reason": reason,
+        "memory_mb": memory,
+        "cpu_percent": cpu,
+        "available": True,
+    }
     return result
 
 

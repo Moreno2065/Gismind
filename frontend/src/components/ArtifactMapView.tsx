@@ -19,6 +19,9 @@ export function ArtifactMapView({ block, onBeforeLoad, onAfterLoad }: {
     setLoading(true); setError(null);
     try {
       const metadata = await getRuntimeArtifact(block.artifact_id, controller.signal);
+      if (metadata.artifact_id !== block.artifact_id || metadata.type !== 'MapLayer') {
+        throw new Error('地图成果标识或类型与服务端响应不一致');
+      }
       const content = await getRuntimeArtifactContent(block.artifact_id, controller.signal);
       const projected = projectRuntimeMapLayer(content, metadata.crs);
       if (!controller.signal.aborted) setLoaded(projected);
@@ -26,7 +29,7 @@ export function ArtifactMapView({ block, onBeforeLoad, onAfterLoad }: {
       if (!controller.signal.aborted) setError((cause as Error).message);
     } finally { if (!controller.signal.aborted) setLoading(false); }
   }
-  if (!block.expired || loaded) return <LazyMapView layers={loaded?.layers ?? block.layers} bbox={loaded?.bbox ?? block.bbox} onBeforeLoad={onBeforeLoad} onAfterLoad={onAfterLoad} />;
+  if (!block.expired || loaded) return <LazyMapView layers={loaded?.layers ?? block.layers} bbox={loaded?.bbox ?? block.bbox} sourceArtifactId={block.artifact_id} onBeforeLoad={onBeforeLoad} onAfterLoad={onAfterLoad} />;
   return <div className="my-3 rounded-xl border border-ink-600 bg-ink-900 p-5">
     <div className="mb-2 font-mono text-[10px] uppercase tracking-[.18em] text-amber">PERSISTED MAP</div>
     <p className="text-sm text-ink-300">{block.artifact_id ? '地图几何未保留在本地缓存，可从原始成果重新加载，无需重跑任务。' : '这条历史地图没有成果引用，无法恢复。'}</p>

@@ -1,7 +1,9 @@
 """Gismind FastAPI 入口。"""
 
+import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 import uuid
@@ -14,15 +16,32 @@ from app.config import settings, validate_config
 from app.runtime import ArtifactStore, RuntimeDB, RuntimeStore, RuntimeSupervisor
 
 logger = logging.getLogger(__name__)
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+class _JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "time": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def _configure_logging() -> None:
     """应用日志配置，使用 settings.APP_LOG_LEVEL 和 APP_LOG_FORMAT。"""
     log_level = getattr(logging, settings.APP_LOG_LEVEL.upper(), logging.INFO)
-    log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     if settings.APP_LOG_FORMAT == "json":
-        log_format = '{"time": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s"}'
-    logging.basicConfig(level=log_level, format=log_format)
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonLogFormatter())
+        logging.basicConfig(level=log_level, handlers=[handler], force=True)
+    else:
+        log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        logging.basicConfig(level=log_level, format=log_format)
     # 抑制第三方库的 DEBUG 噪音
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -92,7 +111,8 @@ def create_app(
 
     @app.middleware("http")
     async def request_id_middleware(request, call_next):
-        request_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex}"
+        raw_id = (request.headers.get("X-Request-ID") or "").strip()
+        request_id = raw_id if _REQUEST_ID_RE.fullmatch(raw_id) else f"req_{uuid.uuid4().hex}"
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
